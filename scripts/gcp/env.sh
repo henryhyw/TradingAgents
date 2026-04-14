@@ -48,6 +48,25 @@ gcp_vm_scp() {
     "$@"
 }
 
+gcp_vm_scp_retry() {
+  local attempt=1
+  local rc=0
+  while (( attempt <= GCP_SSH_RETRIES )); do
+    if gcp_vm_scp "$@"; then
+      return 0
+    fi
+    rc=$?
+    if (( attempt == GCP_SSH_RETRIES )); then
+      return "${rc}"
+    fi
+    local delay=$(( GCP_SSH_RETRY_BACKOFF_SECONDS * attempt ))
+    echo "gcp_vm_scp attempt ${attempt}/${GCP_SSH_RETRIES} failed (rc=${rc}); retrying in ${delay}s..." >&2
+    sleep "${delay}"
+    attempt=$(( attempt + 1 ))
+  done
+  return "${rc}"
+}
+
 gcp_vm_ssh_retry() {
   local attempt=1
   local rc=0
