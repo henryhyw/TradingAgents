@@ -32,6 +32,8 @@ class LLMSettings(BaseSettingsModel):
     vertex_project: str | None = None
     vertex_region: str = "us-central1"
     google_thinking_level: str | None = None
+    timeout_seconds: float = 90.0
+    max_retries: int = 1
 
 
 class RunSettings(BaseSettingsModel):
@@ -229,6 +231,8 @@ class SystemSettings(BaseSettingsModel):
             "google_thinking_level": self.llm.google_thinking_level,
             "vertex_project": self.vertex_project(),
             "vertex_region": self.llm.vertex_region or self.gcp.region,
+            "llm_timeout_seconds": self.llm.timeout_seconds,
+            "llm_max_retries": self.llm.max_retries,
             "output_language": "English",
             "max_debate_rounds": 1,
             "max_risk_discuss_rounds": 1,
@@ -304,6 +308,8 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "vertex_project": os.getenv("TRADINGAGENTS_VERTEX_PROJECT"),
             "vertex_region": os.getenv("TRADINGAGENTS_VERTEX_REGION"),
             "google_thinking_level": os.getenv("TRADINGAGENTS_GOOGLE_THINKING_LEVEL"),
+            "timeout_seconds": _env_float("TRADINGAGENTS_LLM_TIMEOUT_SECONDS"),
+            "max_retries": _env_int("TRADINGAGENTS_LLM_MAX_RETRIES"),
         },
         "run": {
             "default_shortlist_size": _env_int("TRADINGAGENTS_SHORTLIST_SIZE"),

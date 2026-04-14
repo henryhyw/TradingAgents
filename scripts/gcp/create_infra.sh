@@ -27,12 +27,15 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --role "roles/storage.objectAdmin" >/dev/null
 
 if gcloud compute instances describe "${VM_NAME}" --project "${PROJECT_ID}" --zone "${ZONE}" >/dev/null 2>&1; then
-  echo "VM already exists; updating attached service account/scopes."
-  gcloud compute instances set-service-account "${VM_NAME}" \
-    --project "${PROJECT_ID}" \
-    --zone "${ZONE}" \
-    --service-account "${SERVICE_ACCOUNT_EMAIL}" \
-    --scopes "https://www.googleapis.com/auth/cloud-platform" >/dev/null
+  current_sa="$(gcloud compute instances describe "${VM_NAME}" --project "${PROJECT_ID}" --zone "${ZONE}" --format='value(serviceAccounts.email)')"
+  if [[ "${current_sa}" == "${SERVICE_ACCOUNT_EMAIL}" ]]; then
+    echo "VM already exists and service account is correct (${current_sa}); skipping set-service-account."
+  else
+    echo "VM already exists with service account ${current_sa}; updating to ${SERVICE_ACCOUNT_EMAIL}."
+    echo "Note: Compute Engine requires the VM to be stopped before changing service account."
+    echo "Stop the VM and rerun this script if you need to change the attached service account."
+    exit 1
+  fi
 else
   echo "Creating VM ${VM_NAME}"
   gcloud compute instances create "${VM_NAME}" \

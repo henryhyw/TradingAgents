@@ -13,6 +13,8 @@ DEFAULT_CONFIG = {
     "backend_url": None,
     "vertex_project": os.getenv("TRADINGAGENTS_VERTEX_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT")),
     "vertex_region": os.getenv("TRADINGAGENTS_VERTEX_REGION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1")),
+    "llm_timeout_seconds": 90,
+    "llm_max_retries": 1,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": "low",   # "medium", "high", "low"

@@ -7,10 +7,7 @@ source "${SCRIPT_DIR}/env.sh"
 RUN_SCRIPT="${REPO_DIR}/scripts/gcp/vm_daily_run.sh"
 
 echo "Installing cron entry on VM ${VM_NAME}"
-gcloud compute ssh "${VM_NAME}" \
-  --project "${PROJECT_ID}" \
-  --zone "${ZONE}" \
-  --command "bash -lc '
+gcp_vm_ssh_retry --command "bash -lc '
 set -euo pipefail
 chmod +x \"${RUN_SCRIPT}\"
 mkdir -p \"${APP_HOME}/logs\"

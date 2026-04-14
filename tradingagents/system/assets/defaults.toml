@@ -6,6 +6,8 @@ quick_model = "gemini-2.5-flash"
 reasoning_effort = "low"
 temperature = 0.0
 vertex_region = "us-central1"
+timeout_seconds = 90.0
+max_retries = 1
 
 [run]
 default_shortlist_size = 8

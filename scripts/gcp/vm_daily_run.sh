@@ -9,7 +9,9 @@ VENV_DIR="${VENV_DIR:-/opt/tradingagents/venv}"
 
 if [[ -f "${RUNTIME_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
+  set -a
   source "${RUNTIME_ENV_FILE}"
+  set +a
 fi
 
 APP_HOME="${TRADINGAGENTS_HOME:-/opt/tradingagents/.tradingagents}"

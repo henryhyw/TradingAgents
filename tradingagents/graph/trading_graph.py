@@ -135,12 +135,22 @@ class TradingAgentsGraph:
         """Get provider-specific kwargs for LLM client creation."""
         kwargs = {}
         provider = self.config.get("llm_provider", "").lower()
+        llm_timeout = self.config.get("llm_timeout_seconds")
+        llm_max_retries = self.config.get("llm_max_retries")
+        if llm_timeout is not None:
+            kwargs["timeout"] = float(llm_timeout)
+        if llm_max_retries is not None:
+            kwargs["max_retries"] = int(llm_max_retries)
 
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:
                 kwargs["thinking_level"] = thinking_level
         elif provider in {"vertex", "vertexai", "google_vertex", "google-vertex"}:
+            if "timeout" not in kwargs:
+                kwargs["timeout"] = 90
+            if "max_retries" not in kwargs:
+                kwargs["max_retries"] = 1
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:
                 kwargs["thinking_level"] = thinking_level

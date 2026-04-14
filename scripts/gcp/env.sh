@@ -6,6 +6,9 @@ REGION="${REGION:-us-central1}"
 ZONE="${ZONE:-us-central1-a}"
 VM_NAME="${VM_NAME:-ta-runner-01}"
 BUCKET_NAME="${BUCKET_NAME:-ta-artifacts-ta-henry-2026}"
+GCP_USE_IAP="${GCP_USE_IAP:-true}"
+GCP_SSH_RETRIES="${GCP_SSH_RETRIES:-4}"
+GCP_SSH_RETRY_BACKOFF_SECONDS="${GCP_SSH_RETRY_BACKOFF_SECONDS:-3}"
 
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-ta-runner-sa}"
 SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_EMAIL:-${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
@@ -23,3 +26,43 @@ RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-${VM_ROOT_DIR}/runtime.env}"
 APP_HOME="${APP_HOME:-${VM_ROOT_DIR}/.tradingagents}"
 
 CRON_SCHEDULE_NY="${CRON_SCHEDULE_NY:-45 15 * * 1-5}"
+
+GCP_SSH_FLAGS=()
+if [[ "${GCP_USE_IAP}" == "true" ]]; then
+  GCP_SSH_FLAGS+=(--tunnel-through-iap)
+fi
+
+gcp_vm_ssh() {
+  gcloud compute ssh "${VM_NAME}" \
+    --project "${PROJECT_ID}" \
+    --zone "${ZONE}" \
+    "${GCP_SSH_FLAGS[@]}" \
+    "$@"
+}
+
+gcp_vm_scp() {
+  gcloud compute scp \
+    --project "${PROJECT_ID}" \
+    --zone "${ZONE}" \
+    "${GCP_SSH_FLAGS[@]}" \
+    "$@"
+}
+
+gcp_vm_ssh_retry() {
+  local attempt=1
+  local rc=0
+  while (( attempt <= GCP_SSH_RETRIES )); do
+    if gcp_vm_ssh "$@"; then
+      return 0
+    fi
+    rc=$?
+    if (( attempt == GCP_SSH_RETRIES )); then
+      return "${rc}"
+    fi
+    local delay=$(( GCP_SSH_RETRY_BACKOFF_SECONDS * attempt ))
+    echo "gcp_vm_ssh attempt ${attempt}/${GCP_SSH_RETRIES} failed (rc=${rc}); retrying in ${delay}s..." >&2
+    sleep "${delay}"
+    attempt=$(( attempt + 1 ))
+  done
+  return "${rc}"
+}
