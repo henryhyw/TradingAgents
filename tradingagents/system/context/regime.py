@@ -55,6 +55,18 @@ class RegimeAnalyzer:
                 return pd.DataFrame(columns=["Date", "Close"])
             return frame
 
+        valid_proxy_count = 0
+        for symbol in proxies:
+            frame = histories.get(symbol)
+            if frame is not None and len(frame) >= self.settings.data.shortlist_min_history_days:
+                valid_proxy_count += 1
+        proxy_coverage = 0.0 if not proxies else valid_proxy_count / len(proxies)
+        critical_available = 0
+        for symbol in self.settings.data.regime_critical_proxies:
+            frame = histories.get(symbol)
+            if frame is not None and len(frame) >= self.settings.data.shortlist_min_history_days:
+                critical_available += 1
+
         spy = history("SPY")
         qqq = history("QQQ")
         iwm = history("IWM")
@@ -117,6 +129,17 @@ class RegimeAnalyzer:
         notes.append(f"SPY trend score {spy_trend:+.2f}")
         notes.append(f"VIX level {vix_level:.2f}")
         notes.append(f"Risk-on composite {risk_on_score:+.2f}")
+        notes.append(f"Proxy coverage {proxy_coverage:.2f} ({valid_proxy_count}/{len(proxies)})")
+
+        data_quality = "ok"
+        if proxy_coverage < self.settings.data.regime_min_proxy_coverage_fraction:
+            warnings.append("regime_proxy_coverage_below_threshold")
+            data_quality = "impaired"
+        if critical_available < self.settings.data.regime_min_critical_proxy_count:
+            warnings.append("regime_critical_proxies_below_threshold")
+            data_quality = "impaired"
+        if critical_available == 0 or proxy_coverage < 0.35:
+            data_quality = "failed"
 
         return RegimeSnapshot(
             as_of_date=as_of_date,
@@ -136,8 +159,10 @@ class RegimeAnalyzer:
                 "dollar_return_20d": dollar_signal,
                 "vix_level": vix_level,
                 "vix_return_20d": vix_return_20d,
+                "proxy_coverage_fraction": proxy_coverage,
+                "critical_proxy_count": float(critical_available),
             },
             notes=notes,
             warnings=sorted(set(warnings)),
-            data_quality="degraded" if warnings else "ok",
+            data_quality=data_quality,
         )

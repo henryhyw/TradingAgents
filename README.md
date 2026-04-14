@@ -79,6 +79,24 @@ Hard constraints retained:
 - No live broker required
 - Paper trading is the required execution mode
 
+## Data Reliability Guardrails (Unattended Safety)
+
+The yfinance provider now uses a reliability-first policy:
+- Single-symbol history (`get_history` / `get_latest_bar`) uses `yf.Ticker(symbol).history(...)` as the primary path.
+- Batch history keeps `yf.download(...)` for speed, but automatically falls back per symbol to `Ticker.history(...)` when batch output is empty/missing.
+- Per-symbol fallback includes retries with small backoff and source-path logging.
+
+Run safety policy:
+- Regime proxy completeness is measured each run.
+- Shortlist critical history completeness is measured before research.
+- In live LLM mode, runs abort before research if data completeness falls below configured thresholds (to avoid burning tokens on impaired market data).
+
+Relevant knobs:
+- `TRADINGAGENTS_MIN_REGIME_PROXY_COVERAGE`
+- `TRADINGAGENTS_MIN_SHORTLIST_DATA_COVERAGE`
+- `TRADINGAGENTS_HISTORY_RETRY_ATTEMPTS`
+- `TRADINGAGENTS_FAIL_LIVE_RUN_ON_DATA_IMPAIRMENT`
+
 ## Prerequisites
 
 - Python 3.10+ (3.12 recommended)

@@ -46,6 +46,7 @@ class DataSettings(BaseSettingsModel):
     history_lookback_days: PositiveInt = 260
     screen_lookback_days: PositiveInt = 90
     shortlist_min_history_days: PositiveInt = 60
+    critical_history_days: PositiveInt = 60
     min_price: float = 10.0
     min_avg_dollar_volume: float = 20_000_000.0
     max_news_items: PositiveInt = 8
@@ -53,6 +54,13 @@ class DataSettings(BaseSettingsModel):
     earnings_blackout_days: PositiveInt = 3
     correlation_lookback_days: PositiveInt = 90
     universe_min_observations: PositiveInt = 60
+    regime_min_proxy_coverage_fraction: float = 0.70
+    regime_min_critical_proxy_count: PositiveInt = 2
+    shortlist_min_data_coverage_fraction: float = 0.80
+    history_retry_attempts: PositiveInt = 2
+    history_retry_backoff_seconds: float = 0.7
+    fail_live_run_on_data_impairment: bool = True
+    regime_critical_proxies: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "^VIX"])
     regime_proxies: list[str] = Field(
         default_factory=lambda: [
             "SPY",
@@ -244,6 +252,12 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "max_news_items": _env_int("TRADINGAGENTS_MAX_NEWS_ITEMS"),
             "earnings_blackout_days": _env_int("TRADINGAGENTS_EARNINGS_BLACKOUT_DAYS"),
             "correlation_lookback_days": _env_int("TRADINGAGENTS_CORRELATION_LOOKBACK_DAYS"),
+            "regime_min_proxy_coverage_fraction": _env_float("TRADINGAGENTS_MIN_REGIME_PROXY_COVERAGE"),
+            "regime_min_critical_proxy_count": _env_int("TRADINGAGENTS_MIN_REGIME_CRITICAL_PROXY_COUNT"),
+            "shortlist_min_data_coverage_fraction": _env_float("TRADINGAGENTS_MIN_SHORTLIST_DATA_COVERAGE"),
+            "history_retry_attempts": _env_int("TRADINGAGENTS_HISTORY_RETRY_ATTEMPTS"),
+            "history_retry_backoff_seconds": _env_float("TRADINGAGENTS_HISTORY_RETRY_BACKOFF_SECONDS"),
+            "fail_live_run_on_data_impairment": _env_bool("TRADINGAGENTS_FAIL_LIVE_RUN_ON_DATA_IMPAIRMENT"),
         },
         "risk": {
             "max_position_size_fraction": _env_float("TRADINGAGENTS_MAX_POSITION_SIZE"),

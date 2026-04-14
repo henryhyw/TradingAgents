@@ -20,6 +20,7 @@ provider = "yfinance"
 history_lookback_days = 260
 screen_lookback_days = 90
 shortlist_min_history_days = 60
+critical_history_days = 60
 min_price = 10.0
 min_avg_dollar_volume = 20000000.0
 max_news_items = 8
@@ -27,6 +28,13 @@ cache_ttl_hours = 12
 earnings_blackout_days = 3
 correlation_lookback_days = 90
 universe_min_observations = 60
+regime_min_proxy_coverage_fraction = 0.70
+regime_min_critical_proxy_count = 2
+shortlist_min_data_coverage_fraction = 0.80
+history_retry_attempts = 2
+history_retry_backoff_seconds = 0.7
+fail_live_run_on_data_impairment = true
+regime_critical_proxies = ["SPY", "QQQ", "^VIX"]
 regime_proxies = ["SPY", "QQQ", "IWM", "XLK", "XLF", "XLI", "XLY", "XLU", "XLP", "TLT", "IEF", "UUP", "GLD", "USO", "^VIX"]
 
 [risk]

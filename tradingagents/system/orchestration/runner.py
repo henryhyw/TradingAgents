@@ -68,6 +68,7 @@ class TradingSystemRunner:
             self.research = DeterministicResearchAdapter(self.provider, settings)
         else:
             self.research = TradingAgentsResearchAdapter(settings)
+        self.live_llm_mode = not deterministic_research
         self.research_org = ResearchOrganization(settings, self.provider, self.research)
 
     def resolve_as_of_date(self, as_of_date: date | None) -> date:
@@ -106,11 +107,19 @@ class TradingSystemRunner:
         )
         try:
             regime = self.regime_analyzer.analyze(resolved_date)
+            regime_status = "ok"
+            if regime.data_quality == "impaired":
+                regime_status = "warning"
+            if regime.data_quality == "failed":
+                regime_status = "error"
             checks.append(
                 HealthCheckResult(
                     name="regime_model",
-                    status="ok" if regime.data_quality == "ok" else "warning",
-                    detail=f"{regime.label.value} (risk_on_score={regime.risk_on_score:+.2f})",
+                    status=regime_status,
+                    detail=(
+                        f"{regime.label.value} (risk_on_score={regime.risk_on_score:+.2f}, "
+                        f"coverage={regime.signals.get('proxy_coverage_fraction', 0.0):.2f})"
+                    ),
                 )
             )
         except Exception as exc:  # pragma: no cover - defensive path
@@ -254,6 +263,30 @@ class TradingSystemRunner:
         )
         return screened, shortlist
 
+    def _validate_shortlist_data(
+        self,
+        shortlist: list[ScreenedAsset],
+        run_date: date,
+    ) -> tuple[list[ScreenedAsset], dict[str, str], float]:
+        valid_assets: list[ScreenedAsset] = []
+        skipped: dict[str, str] = {}
+        min_history = self.settings.data.critical_history_days
+        for asset in shortlist:
+            if any(reason in {"missing_history", "insufficient_history"} for reason in asset.rejection_reasons):
+                reason = "critical_history_missing_pre_screen"
+                skipped[asset.symbol] = reason
+                logger.error("Skipping %s before research: %s", asset.symbol, reason)
+                continue
+            history = self.provider.get_history(asset.symbol, run_date, min_history)
+            if history.empty or len(history) < min_history:
+                reason = f"critical_history_missing_runtime(len={len(history)})"
+                skipped[asset.symbol] = reason
+                logger.error("Skipping %s before research: %s", asset.symbol, reason)
+                continue
+            valid_assets.append(asset)
+        completeness = 1.0 if not shortlist else len(valid_assets) / len(shortlist)
+        return valid_assets, skipped, completeness
+
     def run_once(
         self,
         as_of_date: date | None = None,
@@ -275,6 +308,19 @@ class TradingSystemRunner:
         except Exception as exc:  # pragma: no cover - defensive path
             warnings.append(f"regime_unavailable:{type(exc).__name__}")
             logger.warning("Regime analysis failed for %s: %s", run_date, exc)
+
+        if (
+            regime is not None
+            and regime.data_quality != "ok"
+            and self.live_llm_mode
+            and self.settings.data.fail_live_run_on_data_impairment
+        ):
+            message = (
+                f"Aborting live research run: regime data quality is {regime.data_quality} "
+                f"(warnings: {', '.join(regime.warnings[:6])})."
+            )
+            logger.error(message)
+            raise RuntimeError(message)
 
         screened, shortlist = self._shortlist_with_context(
             run_date=run_date,
@@ -298,6 +344,23 @@ class TradingSystemRunner:
         orders: list[OrderRecord] = []
         fills = []
         rejected_symbols: dict[str, str] = {}
+
+        shortlist, skipped_symbols, shortlist_data_coverage = self._validate_shortlist_data(shortlist, run_date)
+        rejected_symbols.update(skipped_symbols)
+        warnings.append(f"shortlist_data_coverage={shortlist_data_coverage:.2f}")
+        if (
+            self.live_llm_mode
+            and self.settings.data.fail_live_run_on_data_impairment
+            and shortlist_data_coverage < self.settings.data.shortlist_min_data_coverage_fraction
+        ):
+            message = (
+                "Aborting live research run: shortlist data coverage "
+                f"{shortlist_data_coverage:.2f} below threshold "
+                f"{self.settings.data.shortlist_min_data_coverage_fraction:.2f}. "
+                f"Skipped symbols: {', '.join(sorted(skipped_symbols)) or 'n/a'}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
 
         for asset in shortlist:
             logger.info("Researching %s", asset.symbol)

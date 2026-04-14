@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ class YFinanceMarketDataProvider(MarketDataProvider):
     def _empty_history() -> pd.DataFrame:
         return pd.DataFrame(columns=["Date", "Open", "High", "Low", "Close", "Volume"])
 
+    @staticmethod
+    def _history_columns() -> list[str]:
+        return ["Date", "Open", "High", "Low", "Close", "Volume"]
+
     def _history_cache_path(self, symbol: str) -> Path:
         safe_symbol = symbol.replace("/", "_")
         return self.history_cache_dir / f"{safe_symbol}.csv"
@@ -43,6 +48,11 @@ class YFinanceMarketDataProvider(MarketDataProvider):
             return False
         max_age = timedelta(hours=self.settings.data.cache_ttl_hours)
         return datetime.now() - datetime.fromtimestamp(path.stat().st_mtime) <= max_age
+
+    def _history_window(self, as_of_date: date, lookback_days: int) -> tuple[date, date]:
+        start = (pd.Timestamp(as_of_date) - pd.Timedelta(days=max(lookback_days * 3, 365))).date()
+        end = (pd.Timestamp(as_of_date) + pd.Timedelta(days=1)).date()
+        return start, end
 
     @staticmethod
     def _coerce_event_timestamp(value: Any) -> pd.Timestamp | None:
@@ -83,35 +93,7 @@ class YFinanceMarketDataProvider(MarketDataProvider):
         normalized = normalized.dropna(subset=["Close", "Volume"])
         return normalized.sort_values("Date").reset_index(drop=True)
 
-    def _download_symbol_history(self, symbol: str) -> pd.DataFrame:
-        logger.info("Refreshing yfinance history for %s", symbol)
-        raw = yf_retry(
-            lambda: yf.download(
-                symbol,
-                period="2y",
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-                threads=True,
-                timeout=20,
-            )
-        )
-        frame = self._normalize_history(raw)
-        if not frame.empty:
-            frame.to_csv(self._history_cache_path(symbol), index=False)
-        return frame
-
-    def get_history(self, symbol: str, as_of_date: date, lookback_days: int) -> pd.DataFrame:
-        cache_path = self._history_cache_path(symbol)
-        try:
-            if self._cache_fresh(cache_path):
-                frame = pd.read_csv(cache_path, parse_dates=["Date"])
-                frame["Date"] = frame["Date"].dt.tz_localize(None)
-            else:
-                frame = self._download_symbol_history(symbol)
-        except Exception as exc:
-            logger.warning("Unable to load history for %s: %s", symbol, exc)
-            return self._empty_history()
+    def _filter_history(self, frame: pd.DataFrame, as_of_date: date, lookback_days: int) -> pd.DataFrame:
         if frame.empty:
             return frame
         cutoff = pd.Timestamp(as_of_date)
@@ -120,15 +102,119 @@ class YFinanceMarketDataProvider(MarketDataProvider):
             return filtered
         return filtered.tail(lookback_days).reset_index(drop=True)
 
+    def _load_cached_history(self, symbol: str) -> pd.DataFrame:
+        cache_path = self._history_cache_path(symbol)
+        if not cache_path.exists():
+            return self._empty_history()
+        try:
+            frame = pd.read_csv(cache_path, parse_dates=["Date"])
+            frame["Date"] = frame["Date"].dt.tz_localize(None)
+            return self._normalize_history(frame)
+        except Exception as exc:
+            logger.warning("Unable to read cached history for %s: %s", symbol, exc)
+            return self._empty_history()
+
+    def _write_history_cache(self, symbol: str, frame: pd.DataFrame) -> None:
+        if frame.empty:
+            return
+        try:
+            frame.to_csv(self._history_cache_path(symbol), index=False)
+        except Exception as exc:
+            logger.warning("Unable to write history cache for %s: %s", symbol, exc)
+
+    def _fetch_symbol_history_ticker(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        retries = self.settings.data.history_retry_attempts
+        backoff = self.settings.data.history_retry_backoff_seconds
+        for attempt in range(1, retries + 2):
+            try:
+                ticker = yf.Ticker(symbol)
+                raw = yf_retry(
+                    lambda ticker=ticker, start=start, end=end: ticker.history(
+                        start=start.isoformat(),
+                        end=end.isoformat(),
+                        interval="1d",
+                        auto_adjust=True,
+                        actions=False,
+                    )
+                )
+                normalized = self._normalize_history(raw)
+                if normalized.empty:
+                    raw_period = yf_retry(
+                        lambda ticker=ticker: ticker.history(
+                            period="3y",
+                            interval="1d",
+                            auto_adjust=True,
+                            actions=False,
+                        )
+                    )
+                    normalized = self._normalize_history(raw_period)
+                if not normalized.empty:
+                    logger.info(
+                        "History source for %s: ticker_history (attempt %s/%s)",
+                        symbol,
+                        attempt,
+                        retries + 1,
+                    )
+                    return normalized
+                logger.warning(
+                    "Empty ticker.history for %s on attempt %s/%s",
+                    symbol,
+                    attempt,
+                    retries + 1,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ticker.history failed for %s on attempt %s/%s: %s",
+                    symbol,
+                    attempt,
+                    retries + 1,
+                    exc,
+                )
+            if attempt <= retries:
+                sleep_for = backoff * attempt
+                logger.info("Retrying %s ticker.history in %.2fs", symbol, sleep_for)
+                time.sleep(sleep_for)
+        return self._empty_history()
+
+    def get_history(self, symbol: str, as_of_date: date, lookback_days: int) -> pd.DataFrame:
+        cache_path = self._history_cache_path(symbol)
+        frame = self._empty_history()
+        used_source = "none"
+        try:
+            if self._cache_fresh(cache_path):
+                frame = self._load_cached_history(symbol)
+                used_source = "cache"
+                logger.info("History source for %s: cache", symbol)
+            if frame.empty:
+                start, end = self._history_window(as_of_date, lookback_days)
+                frame = self._fetch_symbol_history_ticker(symbol, start=start, end=end)
+                used_source = "ticker_history"
+                if not frame.empty:
+                    self._write_history_cache(symbol, frame)
+            if frame.empty:
+                stale = self._load_cached_history(symbol)
+                if not stale.empty:
+                    frame = stale
+                    used_source = "stale_cache_fallback"
+                    logger.warning("History source for %s: stale_cache_fallback", symbol)
+        except Exception as exc:
+            logger.warning("Unable to load history for %s: %s", symbol, exc)
+            return self._empty_history()
+        if frame.empty:
+            logger.warning("No usable history for %s after source=%s", symbol, used_source)
+            return frame
+        return self._filter_history(frame, as_of_date, lookback_days)
+
     def batch_get_history(self, symbols: list[str], as_of_date: date, lookback_days: int) -> dict[str, pd.DataFrame]:
         if not symbols:
             return {}
-        start_date = (pd.Timestamp(as_of_date) - pd.Timedelta(days=max(lookback_days * 2, 180))).date()
-        end_date = as_of_date + timedelta(days=1)
+        start_date, end_date = self._history_window(as_of_date, lookback_days)
         histories: dict[str, pd.DataFrame] = {}
+        symbols = [symbol.upper() for symbol in symbols]
         chunk_size = 25
         for chunk_start in range(0, len(symbols), chunk_size):
-            chunk = symbols[chunk_start : chunk_start + chunk_size]
+            chunk = list(dict.fromkeys(symbols[chunk_start : chunk_start + chunk_size]))
+            missing_in_chunk: set[str] = set(chunk)
             try:
                 raw = yf_retry(
                     lambda chunk_symbols=chunk: yf.download(
@@ -145,25 +231,42 @@ class YFinanceMarketDataProvider(MarketDataProvider):
                 )
             except Exception as exc:
                 logger.warning("Batch yfinance history failed for %s: %s", ",".join(chunk), exc)
-                continue
-            if raw.empty:
-                continue
+                raw = pd.DataFrame()
 
-            multi_symbol = isinstance(raw.columns, pd.MultiIndex)
-            for symbol in chunk:
-                if multi_symbol:
-                    if symbol not in raw.columns.get_level_values(0):
+            if not raw.empty:
+                multi_symbol = isinstance(raw.columns, pd.MultiIndex)
+                for symbol in chunk:
+                    if multi_symbol:
+                        if symbol not in raw.columns.get_level_values(0):
+                            continue
+                        symbol_frame = raw[symbol]
+                    else:
+                        symbol_frame = raw
+                    normalized = self._normalize_history(symbol_frame)
+                    filtered = self._filter_history(normalized, as_of_date, lookback_days)
+                    if filtered.empty:
                         continue
-                    symbol_frame = raw[symbol]
-                else:
-                    symbol_frame = raw
-                normalized = self._normalize_history(symbol_frame)
-                if normalized.empty:
-                    continue
-                filtered = normalized[normalized["Date"] <= pd.Timestamp(as_of_date)].tail(lookback_days).reset_index(drop=True)
-                if filtered.empty:
-                    continue
-                histories[symbol] = filtered
+                    histories[symbol] = filtered
+                    missing_in_chunk.discard(symbol)
+                    self._write_history_cache(symbol, normalized)
+                    logger.info("History source for %s: batch_download", symbol)
+
+            if missing_in_chunk:
+                logger.warning(
+                    "Batch missing %s/%s symbols (%s). Falling back to ticker.history.",
+                    len(missing_in_chunk),
+                    len(chunk),
+                    ",".join(sorted(missing_in_chunk)),
+                )
+                for symbol in sorted(missing_in_chunk):
+                    normalized = self._fetch_symbol_history_ticker(symbol, start=start_date, end=end_date)
+                    filtered = self._filter_history(normalized, as_of_date, lookback_days)
+                    if filtered.empty:
+                        logger.warning("No usable history for %s after batch+fallback paths", symbol)
+                        continue
+                    histories[symbol] = filtered
+                    self._write_history_cache(symbol, normalized)
+                    logger.info("History source for %s: ticker_fallback_after_batch", symbol)
         return histories
 
     def get_latest_bar(self, symbol: str, as_of_date: date) -> MarketBar | None:
