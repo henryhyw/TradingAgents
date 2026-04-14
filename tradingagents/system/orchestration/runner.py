@@ -6,10 +6,12 @@ from datetime import date
 import pandas as pd
 
 from tradingagents.system.config import SystemSettings
+from tradingagents.system.cloud import publish_directory_to_gcs
 from tradingagents.system.context import RegimeAnalyzer
 from tradingagents.system.data import YFinanceMarketDataProvider
 from tradingagents.system.execution import PaperBroker
 from tradingagents.system.monitoring.logging_utils import setup_logging
+from tradingagents.system.orchestration.artifacts import export_publishable_artifacts
 from tradingagents.system.orchestration.calendar_utils import default_as_of_date, next_market_days
 from tradingagents.system.orchestration.reporting import generate_daily_report
 from tradingagents.system.portfolio import PortfolioService
@@ -93,7 +95,7 @@ class TradingSystemRunner:
             ),
             HealthCheckResult(
                 name="default_model",
-                status="ok" if self.settings.llm.model == "gpt-5.4-nano" else "warning",
+                status="ok" if self.settings.llm.model == "gemini-2.5-flash" else "warning",
                 detail=f"default={self.settings.llm.model}",
             ),
         ]
@@ -130,11 +132,12 @@ class TradingSystemRunner:
                     detail=f"Unable to compute regime: {exc}",
                 )
             )
+        llm_ready, llm_detail = self.settings.llm_readiness()
         checks.append(
             HealthCheckResult(
                 name="llm_credentials",
-                status="ok" if self.settings.llm_ready() else "error",
-                detail="OPENAI_API_KEY detected" if self.settings.llm_ready() else "OPENAI_API_KEY missing",
+                status="ok" if llm_ready else "error",
+                detail=llm_detail,
             )
         )
         return checks
@@ -493,6 +496,48 @@ class TradingSystemRunner:
         )
         summary = summary.model_copy(update={"completed_at": utc_now(), "report_path": str(report_path)})
         self.repository.save_daily_run_summary(summary)
+
+        export_root = None
+        try:
+            export_result = export_publishable_artifacts(
+                settings=self.settings,
+                repository=self.repository,
+                as_of_date=run_date,
+                portfolio_snapshot=final_portfolio,
+                summary=summary,
+            )
+            export_root = export_result.local_root
+            logger.info("Exported publishable artifacts under %s", export_root)
+        except Exception as exc:
+            warning = f"artifact_export_failed:{type(exc).__name__}"
+            warnings.append(warning)
+            logger.warning("Artifact export failed for %s: %s", run_date, exc)
+
+        if self.settings.gcp.publish_on_run:
+            if not self.settings.gcp.bucket_name:
+                warnings.append("gcs_publish_skipped:missing_bucket")
+                logger.warning("GCS publish requested but bucket is not configured.")
+            elif export_root is None:
+                warnings.append("gcs_publish_skipped:missing_export_root")
+                logger.warning("GCS publish skipped because artifact export failed.")
+            else:
+                try:
+                    publish_result = publish_directory_to_gcs(
+                        local_root=export_root,
+                        bucket_name=self.settings.gcp.bucket_name,
+                        project_id=self.settings.gcp.project_id,
+                    )
+                    logger.info(
+                        "Published %s artifacts to gs://%s",
+                        len(publish_result.uploaded_objects),
+                        publish_result.bucket,
+                    )
+                except Exception as exc:
+                    warnings.append(f"gcs_publish_failed:{type(exc).__name__}")
+                    logger.warning("GCS publish failed for %s: %s", run_date, exc)
+
+        summary = summary.model_copy(update={"warnings": warnings, "completed_at": utc_now()})
+        self.repository.save_daily_run_summary(summary)
         logger.info("Completed %s run for %s", mode.value, run_date)
         return summary
 
@@ -514,6 +559,28 @@ class TradingSystemRunner:
                 )
             )
         return summaries
+
+    def export_artifacts(self, as_of_date: date | None = None):
+        run_date = self.resolve_as_of_date(as_of_date)
+        self.generate_report_from_storage(run_date)
+        portfolio = self.broker.get_portfolio_snapshot(run_date)
+        summary = self.repository.get_run_summary_for_date(run_date)
+        return export_publishable_artifacts(
+            settings=self.settings,
+            repository=self.repository,
+            as_of_date=run_date,
+            portfolio_snapshot=portfolio,
+            summary=summary,
+        )
+
+    def publish_artifacts(self, as_of_date: date | None = None) -> int:
+        export_result = self.export_artifacts(as_of_date)
+        publish_result = publish_directory_to_gcs(
+            local_root=export_result.local_root,
+            bucket_name=self.settings.gcp.bucket_name,
+            project_id=self.settings.gcp.project_id,
+        )
+        return len(publish_result.uploaded_objects)
 
     def generate_report_from_storage(self, as_of_date: date) -> str | None:
         def _dedupe_latest_by_symbol(items):

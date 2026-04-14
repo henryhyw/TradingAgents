@@ -1,109 +1,87 @@
-# TradingAgents Local Research & Paper Trading System (V2)
+# TradingAgents Local Research + Paper Trading System (V2, Vertex/GCP)
 
-This repository contains a local-first US equities research + risk + portfolio + paper execution system built on top of the upstream TradingAgents multi-agent graph.
+This repository is a local-first US equities research, risk, portfolio, and paper-execution system built on top of the upstream TradingAgents graph, with:
 
-It is designed as a professional internal prototype:
-- Local macOS operation (Python and Docker workflow)
-- Default model: `gpt-5.4-nano`
-- Default data source: `yfinance`
-- Phase-1 required secret: `OPENAI_API_KEY` only
-- Structured objects, hard deterministic risk controls, auditable SQLite artifacts, and paper execution
+- Default live LLM provider: **Google Vertex AI**
+- Default live model: **`gemini-2.5-flash`**
+- Default data source: **`yfinance`**
+- Execution mode: **local paper trading**
+- Persistence: **SQLite + report artifacts**
+- Optional artifact publishing to **Google Cloud Storage (GCS)**
+- Compute Engine VM deployment scripts for unattended daily runs
 
-## V2 Upgrade Summary
+The local trading and paper broker flow is preserved. Cloud deployment is additive.
 
-Compared with the prior phase-1 baseline, v2 adds:
-- Regime layer (`risk_on` / `balanced` / `risk_off` / `high_volatility`) from liquid proxy instruments
-- Multi-stage universe screening with richer ranking and shortlist reasons
-- Explicit multi-role research organization outputs:
-  - Universe Scout
-  - Market Regime Analyst
-  - Macro Proxy Analyst
-  - Technical Analyst
-  - Fundamental Analyst
-  - News/Event Analyst
-  - Sentiment/Narrative Analyst
-  - Bull Researcher
-  - Bear Researcher
-  - Debate / Adjudication Layer
-  - Trader
-- Structured research bundle persistence (not just top-level buy/sell/hold)
-- Upgraded risk committee logic:
-  - regime-aware risk budgeting
-  - sector concentration checks
-  - correlation-aware checks
-  - volatility-aware sizing
-  - symbol cooldown logic
-- Portfolio fit assessment + execution planning (new/add/trim/exit/hold)
-- Richer daily reports (markdown + JSON) with regime, discovery, debate, risk, portfolio fit, and execution sections
+## What Changed In This Upgrade
 
-## What Is Reused vs Added
+- Added Vertex AI Gemini provider path (ADC/service-account based).
+- Switched default live model/provider to `vertex` + `gemini-2.5-flash`.
+- Kept OpenAI and other provider paths optional.
+- Added publishable artifact export tree:
+  - `reports/YYYY-MM-DD/summary.md`
+  - `reports/YYYY-MM-DD/summary.json`
+  - `snapshots/latest_positions.json`
+  - `snapshots/latest_orders.json`
+  - `snapshots/latest_run_summary.json`
+  - optional: `snapshots/latest_regime.json`, `snapshots/latest_candidates.json`
+- Added GCS upload utility.
+- Added Compute Engine deployment scripts and cron-based daily execution wrapper.
+- Preserved yfinance reliability guardrails and fail-fast data impairment checks.
 
-Reused from upstream TradingAgents:
-- Upstream multi-agent graph and debate/risk discussion backbone (`tradingagents/graph/*`, `tradingagents/agents/*`)
-- Upstream LLM client integration
-- Existing dataflow tooling used by upstream graph
+## Architecture (System Layer)
 
-Added/extended in this local system:
-- `tradingagents/system/*` architecture (config, schemas, storage, orchestration, CLI)
-- Stable adapter around upstream graph for controlled production-like flows
-- Regime, universe ranking, risk committee, portfolio manager, execution planner, reporting, and tests
+Primary local system modules are under `tradingagents/system`:
 
-## Architecture (V2)
+- `config.py`: typed settings, env/config merge, provider readiness checks
+- `data/yfinance_provider.py`: robust yfinance access with batch+fallback/retries
+- `context/regime.py`: structured regime model from liquid proxy instruments
+- `universe/selector.py`: screening, ranking, shortlist pipeline
+- `research/adapter.py` + `research/organization.py`: upstream adapter + multi-role research artifacts
+- `risk/engine.py`: deterministic hard risk committee logic
+- `portfolio/service.py`: fit + target-weight + execution plan logic
+- `execution/paper.py`: paper broker with persisted positions/orders/fills
+- `storage/db.py` + `storage/repository.py`: SQLite schema and repository APIs
+- `orchestration/runner.py`: run lifecycle, guardrails, report generation, export/publish hook
+- `orchestration/reporting.py`: markdown/json daily report
+- `orchestration/artifacts.py`: publishable snapshot export
+- `cloud/gcs_publisher.py`: GCS uploader
+- `cli.py`: operator CLI
 
-`tradingagents/system`:
+## LLM Provider Migration: OpenAI -> Vertex AI Gemini
 
-- `config.py`: typed config loading from defaults + env
-- `schemas.py`: strongly typed contracts
-  - Existing: `ResearchDecision`, `RiskDecision`, `OrderIntent`, `OrderRecord`, `FillRecord`, `PortfolioSnapshot`, `DailyRunSummary`
-  - V2 additions: `RegimeSnapshot`, `CandidateAssessment`, `AnalystMemo`, `BullCaseMemo`, `BearCaseMemo`, `DebateSummary`, `ResearchBundle`, `PortfolioFitAssessment`, `ExecutionPlan`
-- `context/regime.py`: market regime model from liquid proxies
-- `universe/selector.py`: screening, ranking, shortlist generation with explainability
-- `data/yfinance_provider.py`: default market/fundamentals/news/events provider
-- `research/adapter.py`: upstream graph adapter and safe fallbacks
-- `research/organization.py`: multi-role research orchestration + structured bundle
-- `risk/engine.py`: hard deterministic risk committee logic
-- `portfolio/service.py`: portfolio fit + target-weight translation + execution plan
-- `execution/paper.py`: paper broker with persisted state and fill assumptions
-- `execution/futu.py`: production-shaped fail-safe live broker stub (disabled in phase-1)
-- `storage/db.py` + `storage/repository.py`: SQLite schema and persistence APIs
-- `orchestration/runner.py`: run loop, replay, storage-backed report generation
-- `orchestration/reporting.py`: rich markdown/json report generation
-- `cli.py`: operator commands
+Default config now uses:
 
-## Data and Execution Constraints
+- `TRADINGAGENTS_LLM_PROVIDER=vertex`
+- `TRADINGAGENTS_LLM_MODEL=gemini-2.5-flash`
+- `TRADINGAGENTS_LLM_DEEP_MODEL=gemini-2.5-flash`
+- `TRADINGAGENTS_LLM_QUICK_MODEL=gemini-2.5-flash`
 
-Hard constraints retained:
-- No Alpha Vantage requirement
-- No paid market data requirement
-- No Futu credentials required
-- No live broker required
-- Paper trading is the required execution mode
+Vertex auth is via ADC (local `gcloud auth application-default login`) or attached VM service account.
 
-## Data Reliability Guardrails (Unattended Safety)
+OpenAI remains optional:
 
-The yfinance provider now uses a reliability-first policy:
-- Single-symbol history (`get_history` / `get_latest_bar`) uses `yf.Ticker(symbol).history(...)` as the primary path.
-- Batch history keeps `yf.download(...)` for speed, but automatically falls back per symbol to `Ticker.history(...)` when batch output is empty/missing.
-- Per-symbol fallback includes retries with small backoff and source-path logging.
-
-Run safety policy:
-- Regime proxy completeness is measured each run.
-- Shortlist critical history completeness is measured before research.
-- In live LLM mode, runs abort before research if data completeness falls below configured thresholds (to avoid burning tokens on impaired market data).
-
-Relevant knobs:
-- `TRADINGAGENTS_MIN_REGIME_PROXY_COVERAGE`
-- `TRADINGAGENTS_MIN_SHORTLIST_DATA_COVERAGE`
-- `TRADINGAGENTS_HISTORY_RETRY_ATTEMPTS`
-- `TRADINGAGENTS_FAIL_LIVE_RUN_ON_DATA_IMPAIRMENT`
+- set `TRADINGAGENTS_LLM_PROVIDER=openai`
+- set `OPENAI_API_KEY=...`
 
 ## Prerequisites
 
-- Python 3.10+ (3.12 recommended)
-- Docker Desktop (optional runtime path)
-- Internet access (yfinance and OpenAI APIs)
+Local/macOS:
 
-## Setup (Local Python)
+- Python 3.10+ (3.12 recommended)
+- `gcloud` installed and authenticated
+- ADC configured (`gcloud auth application-default login`) for Vertex/GCS if running live LLM/publish locally
+- Docker Desktop optional
+
+GCP target assumptions for deployment scripts:
+
+- Project: `ta-henry-2026`
+- Region: `us-central1`
+- Zone: `us-central1-a`
+- VM: `ta-runner-01`
+- Bucket: `gs://ta-artifacts-ta-henry-2026`
+- APIs enabled: `compute`, `aiplatform`, `storage`, `iam`
+
+## Local Setup
 
 ```bash
 python -m venv .venv
@@ -112,19 +90,28 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Set:
+## Environment Configuration
+
+See `.env.example`. Core defaults are:
 
 ```bash
-OPENAI_API_KEY=your_key_here
+TRADINGAGENTS_LLM_PROVIDER=vertex
+TRADINGAGENTS_LLM_MODEL=gemini-2.5-flash
+TRADINGAGENTS_VERTEX_PROJECT=ta-henry-2026
+TRADINGAGENTS_VERTEX_REGION=us-central1
+TRADINGAGENTS_GCS_BUCKET=ta-artifacts-ta-henry-2026
+TRADINGAGENTS_PUBLISH_ON_RUN=false
 ```
 
-Bootstrap local state:
+No static JSON key file is required. ADC/service-account is used.
+
+## Core CLI Commands
+
+Setup/bootstrap:
 
 ```bash
 tradingagents setup
 ```
-
-## Exact Commands
 
 Health check:
 
@@ -132,175 +119,218 @@ Health check:
 tradingagents health-check
 ```
 
-Inspect loaded config:
-
-```bash
-tradingagents show-config
-```
-
-One-shot dry run:
+Dry run:
 
 ```bash
 tradingagents dry-run --as-of 2026-04-13
 ```
 
-One-shot paper run:
+Run once (paper execute):
 
 ```bash
 tradingagents run-once --as-of 2026-04-13 --execute
 ```
 
-Daily scheduler:
+Run daily local loop (non-VM mode):
 
 ```bash
 tradingagents run-daily --run-at 15:45
 ```
 
-Replay/backfill:
+Replay:
 
 ```bash
 tradingagents replay --start 2026-04-01 --end 2026-04-10 --no-execute
 ```
 
-Portfolio and orders:
+Inspect state:
 
 ```bash
 tradingagents show-positions
 tradingagents show-recent-orders --limit 20
-```
-
-Regime and candidate inspection:
-
-```bash
 tradingagents show-regime --as-of 2026-04-13
 tradingagents show-candidates --as-of 2026-04-13 --limit 20
-```
-
-Regenerate report from persisted artifacts:
-
-```bash
 tradingagents generate-daily-report --as-of 2026-04-13
 ```
 
-Legacy upstream CLI (kept):
+Export/publish artifacts:
 
 ```bash
-tradingagents-legacy
+tradingagents export-artifacts --as-of 2026-04-13
+tradingagents publish-artifacts --as-of 2026-04-13
 ```
 
 ## Docker Commands
 
-Build:
-
 ```bash
 docker compose build
-```
-
-Health check:
-
-```bash
 docker compose run --rm tradingagents health-check
-```
-
-Dry run:
-
-```bash
 docker compose run --rm tradingagents dry-run --as-of 2026-04-13
-```
-
-Paper run:
-
-```bash
 docker compose run --rm tradingagents run-once --as-of 2026-04-13 --execute
 ```
 
-Persistence:
-- Volume `tradingagents_data` mounts to `/home/appuser/.tradingagents`
-
-## Storage Layout
+## Local Storage Paths
 
 Default root: `~/.tradingagents`
 
-- SQLite: `~/.tradingagents/db/tradingagents.db`
-- Cache: `~/.tradingagents/cache`
+- DB: `~/.tradingagents/db/tradingagents.db`
 - Logs: `~/.tradingagents/logs/tradingagents-system.log`
-- Reports: `~/.tradingagents/reports/<YYYY-MM-DD>/summary.md` and `summary.json`
-- Upstream artifacts: `~/.tradingagents/artifacts`
+- Reports: `~/.tradingagents/reports/YYYY-MM-DD/summary.md|summary.json`
+- Export staging: `~/.tradingagents/artifacts/publish/...`
 
-## V2 Research Pipeline
+## Google Cloud Deployment (Compute Engine VM)
 
-Per candidate, v2 persists:
-- `CandidateAssessment` (screening + ranking evidence)
-- multi-role `AnalystMemo` set
-- `BullCaseMemo`
-- `BearCaseMemo`
-- `DebateSummary`
-- final `ResearchDecision`
-- `ResearchBundle` tying the above together
+Deployment scripts are in `scripts/gcp`.
 
-## V2 Risk and Portfolio Logic
+### 1. Create/Update Infra
 
-Risk committee is deterministic and non-bypassable:
-- Existing hard rules remain (long-only, max position, max gross, daily loss guardrail, liquidity floor, earnings blackout best effort)
-- Added regime-aware gross budgeting
-- Added sector concentration checks
-- Added correlation-aware controls
-- Added volatility-aware sizing
-- Added symbol cooldown checks
+```bash
+./scripts/gcp/create_infra.sh
+```
 
-Portfolio manager adds:
-- fit assessment (`PortfolioFitAssessment`)
-- target weight translation
-- action type (`new_entry`, `add`, `trim`, `exit`, `hold`)
-- execution shaping (`ExecutionPlan`)
+This script:
 
-## Reporting
+- ensures service account `ta-runner-sa@ta-henry-2026.iam.gserviceaccount.com`
+- grants:
+  - `roles/aiplatform.user` (Vertex inference)
+  - bucket-level `roles/storage.objectAdmin` on `gs://ta-artifacts-ta-henry-2026` (artifact writes/overwrites)
+- creates VM `ta-runner-01` if missing, with:
+  - `e2-micro`
+  - 20GB `pd-standard`
+  - Ubuntu 22.04 LTS
+  - attached service account + cloud-platform scope
 
-Each daily report includes:
-- regime summary
-- universe/discovery summary
-- shortlist with reasons
-- research + bull/bear + debate summary
-- risk committee decisions
-- portfolio fit and execution planner outputs
-- orders/fills
-- end-of-day portfolio snapshot
-- concentration summary
-- warnings/data quality notes
+### 2. Deploy/Update Code To VM
 
-Outputs:
-- human markdown: `summary.md`
-- machine JSON: `summary.json`
+```bash
+./scripts/gcp/deploy_or_update.sh
+```
 
-## Quality Commands
+### 3. Bootstrap Runtime On VM
 
-Lint:
+```bash
+./scripts/gcp/bootstrap_vm.sh
+```
+
+This installs Python runtime, creates venv, installs project, and writes `/opt/tradingagents/runtime.env`.
+
+### 4. Install Cron Job
+
+```bash
+./scripts/gcp/install_cron.sh
+```
+
+Cron behavior:
+
+- `CRON_TZ=America/New_York`
+- default schedule: `45 15 * * 1-5`
+- executes `scripts/gcp/vm_daily_run.sh`
+- wrapper is idempotent for a given market date (skips if already completed)
+
+### 5. Verify VM
+
+```bash
+./scripts/gcp/health_check_vm.sh
+```
+
+### 6. Trigger Manual Run On VM
+
+```bash
+./scripts/gcp/run_remote_daily.sh
+```
+
+## VM Runtime Behavior (Daily)
+
+`scripts/gcp/vm_daily_run.sh` executes:
+
+1. activate venv + load runtime env
+2. resolve market session date
+3. skip if run already completed for that date
+4. `tradingagents run-once --as-of <date> --execute`
+5. `tradingagents export-artifacts --as-of <date>`
+6. `tradingagents publish-artifacts --as-of <date>`
+
+Manual VM scripts:
+
+- `scripts/gcp/vm_run_once.sh [YYYY-MM-DD]`
+- `scripts/gcp/vm_publish_once.sh [YYYY-MM-DD]`
+
+## VM File Locations
+
+On VM:
+
+- Repo: `/opt/tradingagents/TradingAgents`
+- Runtime env: `/opt/tradingagents/runtime.env`
+- Venv: `/opt/tradingagents/venv`
+- Local app home: `/opt/tradingagents/.tradingagents`
+- Daily log: `/opt/tradingagents/.tradingagents/logs/daily-run.log`
+- Cron log: `/opt/tradingagents/.tradingagents/logs/cron.log`
+- SQLite: `/opt/tradingagents/.tradingagents/db/tradingagents.db`
+
+## GCS Artifact Layout
+
+After each publish:
+
+- `gs://ta-artifacts-ta-henry-2026/reports/YYYY-MM-DD/summary.md`
+- `gs://ta-artifacts-ta-henry-2026/reports/YYYY-MM-DD/summary.json`
+- `gs://ta-artifacts-ta-henry-2026/snapshots/latest_positions.json`
+- `gs://ta-artifacts-ta-henry-2026/snapshots/latest_orders.json`
+- `gs://ta-artifacts-ta-henry-2026/snapshots/latest_run_summary.json`
+- optional:
+  - `.../snapshots/latest_regime.json`
+  - `.../snapshots/latest_candidates.json`
+
+## Remote Inspection Commands
+
+List recent published artifacts:
+
+```bash
+gcloud storage ls gs://ta-artifacts-ta-henry-2026/reports/
+gcloud storage ls gs://ta-artifacts-ta-henry-2026/snapshots/
+```
+
+Inspect latest run summary:
+
+```bash
+gcloud storage cat gs://ta-artifacts-ta-henry-2026/snapshots/latest_run_summary.json
+```
+
+SSH when needed:
+
+```bash
+gcloud compute ssh ta-runner-01 --zone us-central1-a --project ta-henry-2026
+```
+
+## Quality / Validation
 
 ```bash
 ruff check tradingagents/system tests
-```
-
-Tests:
-
-```bash
 pytest -q
 ```
 
-## Limitations (No Extra Vendor)
+## Data Reliability Guardrails
 
-Because phase-1 data is yfinance-only:
-- Data quality can be inconsistent (missing fundamentals/news/events, transient API/TLS/network issues)
-- Earnings/event coverage is best effort, not institutional-grade event data
-- Correlation and regime models are approximations from public proxies
-- Paper fills are bar-based simulation, not broker microstructure
+yfinance safety behavior remains active:
 
-The system degrades safely and records warnings when evidence is weak.
+- single-symbol history uses `Ticker.history(...)`
+- batch path uses `yf.download(...)` with per-symbol fallback + retries
+- run aborts before live LLM research when regime/shortlist data coverage is below thresholds
+- symbols with critical missing history are skipped before research
 
-## Deferred to Phase-2 (Intentional)
+This prevents token burn on materially impaired market data.
 
-Still intentionally disabled:
-- Live Futu OpenD connectivity
-- Real broker order routing
-- Live account startup checks and credentialed live safeguards
+## Current Limitations (No Paid Data Vendor)
 
-The `BrokerAdapter` abstraction and `FutuBroker` shape are present so phase-2 can swap execution backends without replacing research/risk/storage/reporting layers.
+- yfinance coverage can be noisy/incomplete for some fields
+- news/events/fundamentals are best-effort, not institutional-grade
+- paper fills are low-frequency bar-based simulation
+
+## Deferred To Future Futu/Live Phase
+
+Intentionally deferred:
+
+- live Futu OpenD connectivity
+- real broker order routing
+- live account credential and startup safety gates
+
+The broker abstraction remains in place so live execution can be added without replacing research/risk/storage/reporting layers.

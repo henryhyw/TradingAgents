@@ -29,7 +29,8 @@ class TradingAgentsResearchAdapter(ResearchAdapter):
     def _ensure_graph(self) -> TradingAgentsGraph:
         if self._graph is None:
             if not self.settings.llm_ready():
-                raise RuntimeError("OPENAI_API_KEY is required for live TradingAgents research runs.")
+                _, detail = self.settings.llm_readiness()
+                raise RuntimeError(f"Live TradingAgents research credentials are not ready: {detail}")
             self._graph = TradingAgentsGraph(
                 selected_analysts=self.settings.run.research_analysts,
                 debug=False,
@@ -247,7 +248,7 @@ class DeterministicResearchAdapter(ResearchAdapter):
                 parser_mode="deterministic",
                 upstream_rating=action.value.upper(),
                 upstream_artifact_path=None,
-                notes=["Used only for tests and local smoke runs without OPENAI_API_KEY."],
+                notes=["Used only for tests and local smoke runs without live LLM credentials."],
                 extra={},
             ),
         )

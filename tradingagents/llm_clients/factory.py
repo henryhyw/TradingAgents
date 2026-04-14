@@ -4,6 +4,7 @@ from .base_client import BaseLLMClient
 from .openai_client import OpenAIClient
 from .anthropic_client import AnthropicClient
 from .google_client import GoogleClient
+from .vertex_client import VertexAIClient
 from .azure_client import AzureOpenAIClient
 
 # Providers that use the OpenAI-compatible chat completions API
@@ -39,6 +40,9 @@ def create_llm_client(
 
     if provider_lower == "anthropic":
         return AnthropicClient(model, base_url, **kwargs)
+
+    if provider_lower in {"vertex", "vertexai", "google_vertex", "google-vertex"}:
+        return VertexAIClient(model, base_url, **kwargs)
 
     if provider_lower == "google":
         return GoogleClient(model, base_url, **kwargs)

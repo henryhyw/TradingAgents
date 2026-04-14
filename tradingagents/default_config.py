@@ -7,10 +7,12 @@ DEFAULT_CONFIG = {
     "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", os.path.join(_TRADINGAGENTS_HOME, "logs")),
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
     # LLM settings
-    "llm_provider": "openai",
-    "deep_think_llm": "gpt-5.4-nano",
-    "quick_think_llm": "gpt-5.4-nano",
-    "backend_url": "https://api.openai.com/v1",
+    "llm_provider": "vertex",
+    "deep_think_llm": "gemini-2.5-flash",
+    "quick_think_llm": "gemini-2.5-flash",
+    "backend_url": None,
+    "vertex_project": os.getenv("TRADINGAGENTS_VERTEX_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT")),
+    "vertex_region": os.getenv("TRADINGAGENTS_VERTEX_REGION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1")),
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": "low",   # "medium", "high", "low"

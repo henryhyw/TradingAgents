@@ -1,10 +1,11 @@
 [llm]
-provider = "openai"
-model = "gpt-5.4-nano"
-deep_model = "gpt-5.4-nano"
-quick_model = "gpt-5.4-nano"
+provider = "vertex"
+model = "gemini-2.5-flash"
+deep_model = "gemini-2.5-flash"
+quick_model = "gemini-2.5-flash"
 reasoning_effort = "low"
 temperature = 0.0
+vertex_region = "us-central1"
 
 [run]
 default_shortlist_size = 8
@@ -69,3 +70,19 @@ allow_fractional_shares = false
 [storage]
 home_subdir = ".tradingagents"
 database_name = "tradingagents.db"
+
+[gcp]
+project_id = "ta-henry-2026"
+region = "us-central1"
+zone = "us-central1-a"
+vm_name = "ta-runner-01"
+bucket_name = "ta-artifacts-ta-henry-2026"
+service_account_name = "ta-runner-sa"
+machine_type = "e2-micro"
+boot_disk_size_gb = 20
+boot_disk_type = "pd-standard"
+os_image_family = "ubuntu-2204-lts"
+os_image_project = "ubuntu-os-cloud"
+publish_on_run = false
+reports_prefix = "reports"
+snapshots_prefix = "snapshots"

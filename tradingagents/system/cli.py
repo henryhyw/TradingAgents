@@ -80,8 +80,13 @@ def show_config(
         ("repo_root", str(settings.repo_root)),
         ("database", str(settings.paths.database_path)),
         ("reports_dir", str(settings.paths.reports_dir)),
+        ("llm_provider", settings.llm.provider),
         ("model", settings.llm.model),
+        ("vertex_project", settings.vertex_project() or "-"),
+        ("vertex_region", settings.llm.vertex_region),
         ("data_provider", settings.data.provider),
+        ("gcs_bucket", settings.gcp.bucket_name),
+        ("publish_on_run", str(settings.gcp.publish_on_run)),
         ("shortlist_size", str(settings.run.default_shortlist_size)),
         ("max_per_sector", str(settings.run.max_shortlist_per_sector)),
         ("max_position_size", f"{settings.risk.max_position_size_fraction:.2%}"),
@@ -121,6 +126,8 @@ def run_once(
     console.print(f"Report: {summary.report_path}")
     console.print(f"Orders submitted: {summary.orders_submitted}")
     console.print(f"Fills completed: {summary.fills_completed}")
+    if summary.warnings:
+        console.print(f"Warnings: {', '.join(summary.warnings[:8])}")
 
 
 @app.command("dry-run")
@@ -289,3 +296,39 @@ def generate_daily_report_cmd(
     runner = _runner(config, deterministic_research=False, verbose=verbose)
     report_path = runner.generate_report_from_storage(date.fromisoformat(as_of))
     console.print(f"Report written to {report_path}")
+
+
+@app.command("export-artifacts")
+def export_artifacts_cmd(
+    config: Annotated[str | None, typer.Option(help="Optional TOML config path.")] = None,
+    as_of: Annotated[str | None, typer.Option(help="Report date in YYYY-MM-DD.")] = None,
+    verbose: Annotated[bool, typer.Option(help="Enable verbose logging.")] = False,
+) -> None:
+    runner = _runner(config, deterministic_research=False, verbose=verbose)
+    result = runner.export_artifacts(_parse_date(as_of))
+    console.print(f"Export root: {result.local_root}")
+    console.print(f"Report markdown: {result.report_markdown}")
+    console.print(f"Report json: {result.report_json}")
+    console.print(f"Latest positions: {result.latest_positions}")
+    console.print(f"Latest orders: {result.latest_orders}")
+    console.print(f"Latest run summary: {result.latest_run_summary}")
+
+
+@app.command("publish-artifacts")
+def publish_artifacts_cmd(
+    config: Annotated[str | None, typer.Option(help="Optional TOML config path.")] = None,
+    as_of: Annotated[str | None, typer.Option(help="Report date in YYYY-MM-DD.")] = None,
+    bucket: Annotated[str | None, typer.Option(help="Optional GCS bucket override.")] = None,
+    verbose: Annotated[bool, typer.Option(help="Enable verbose logging.")] = False,
+) -> None:
+    settings = load_settings(config)
+    if bucket:
+        settings = settings.model_copy(
+            update={"gcp": settings.gcp.model_copy(update={"bucket_name": bucket})}
+        )
+    if not settings.gcp.bucket_name:
+        console.print("GCS bucket is not configured. Set TRADINGAGENTS_GCS_BUCKET.")
+        raise typer.Exit(code=1)
+    runner = TradingSystemRunner(settings, deterministic_research=False, verbose=verbose)
+    uploaded = runner.publish_artifacts(_parse_date(as_of))
+    console.print(f"Published {uploaded} artifacts to gs://{settings.gcp.bucket_name}")

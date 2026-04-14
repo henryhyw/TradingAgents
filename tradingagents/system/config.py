@@ -22,13 +22,16 @@ class BaseSettingsModel(BaseModel):
 
 
 class LLMSettings(BaseSettingsModel):
-    provider: str = "openai"
-    model: str = "gpt-5.4-nano"
-    deep_model: str = "gpt-5.4-nano"
-    quick_model: str = "gpt-5.4-nano"
+    provider: str = "vertex"
+    model: str = "gemini-2.5-flash"
+    deep_model: str = "gemini-2.5-flash"
+    quick_model: str = "gemini-2.5-flash"
     reasoning_effort: str | None = "low"
     temperature: float = 0.0
-    backend_url: str = "https://api.openai.com/v1"
+    backend_url: str | None = None
+    vertex_project: str | None = None
+    vertex_region: str = "us-central1"
+    google_thinking_level: str | None = None
 
 
 class RunSettings(BaseSettingsModel):
@@ -127,6 +130,23 @@ class PathSettings(BaseSettingsModel):
     artifacts_dir: Path
 
 
+class GCPSettings(BaseSettingsModel):
+    project_id: str = "ta-henry-2026"
+    region: str = "us-central1"
+    zone: str = "us-central1-a"
+    vm_name: str = "ta-runner-01"
+    bucket_name: str = "ta-artifacts-ta-henry-2026"
+    service_account_name: str = "ta-runner-sa"
+    machine_type: str = "e2-micro"
+    boot_disk_size_gb: PositiveInt = 20
+    boot_disk_type: str = "pd-standard"
+    os_image_family: str = "ubuntu-2204-lts"
+    os_image_project: str = "ubuntu-os-cloud"
+    publish_on_run: bool = False
+    reports_prefix: str = "reports"
+    snapshots_prefix: str = "snapshots"
+
+
 class SystemSettings(BaseSettingsModel):
     repo_root: Path = REPO_ROOT
     llm: LLMSettings = Field(default_factory=LLMSettings)
@@ -135,6 +155,7 @@ class SystemSettings(BaseSettingsModel):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    gcp: GCPSettings = Field(default_factory=GCPSettings)
     paths: PathSettings
 
     def ensure_directories(self) -> None:
@@ -151,13 +172,52 @@ class SystemSettings(BaseSettingsModel):
     def openai_api_key(self) -> str | None:
         return os.getenv("OPENAI_API_KEY")
 
+    def google_api_key(self) -> str | None:
+        return (
+            os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+        )
+
+    def vertex_project(self) -> str | None:
+        return self.llm.vertex_project or os.getenv("GOOGLE_CLOUD_PROJECT") or self.gcp.project_id
+
+    def vertex_adc_ready(self) -> tuple[bool, str]:
+        try:
+            import google.auth
+
+            _, discovered_project = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            project = self.vertex_project() or discovered_project
+            if not project:
+                return False, "ADC is present but project is not configured."
+            return True, f"ADC detected (project={project})."
+        except Exception as exc:  # pragma: no cover - depends on host auth state
+            return False, f"ADC unavailable: {type(exc).__name__}: {exc}"
+
+    def llm_readiness(self) -> tuple[bool, str]:
+        provider = self.llm.provider.lower()
+        if provider == "openai":
+            ready = bool(self.openai_api_key())
+            return ready, "OPENAI_API_KEY detected" if ready else "OPENAI_API_KEY missing"
+        if provider in {"vertex", "vertexai", "google_vertex", "google-vertex"}:
+            return self.vertex_adc_ready()
+        if provider == "google":
+            ready = bool(self.google_api_key())
+            return ready, "GOOGLE_API_KEY detected" if ready else "GOOGLE_API_KEY missing"
+        if provider == "anthropic":
+            ready = bool(os.getenv("ANTHROPIC_API_KEY"))
+            return ready, "ANTHROPIC_API_KEY detected" if ready else "ANTHROPIC_API_KEY missing"
+        # OpenAI-compatible third-party providers are opt-in and may use custom env vars.
+        return True, f"Provider '{provider}' readiness not pre-validated."
+
     def llm_ready(self) -> bool:
-        if self.llm.provider.lower() != "openai":
-            return False
-        return bool(self.openai_api_key())
+        ready, _ = self.llm_readiness()
+        return ready
 
     def as_tradingagents_config(self) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "project_dir": str(self.repo_root / "tradingagents"),
             "results_dir": str(self.paths.artifacts_dir),
             "data_cache_dir": str(self.paths.cache_dir / "upstream"),
@@ -166,6 +226,9 @@ class SystemSettings(BaseSettingsModel):
             "quick_think_llm": self.llm.quick_model,
             "backend_url": self.llm.backend_url,
             "openai_reasoning_effort": self.llm.reasoning_effort,
+            "google_thinking_level": self.llm.google_thinking_level,
+            "vertex_project": self.vertex_project(),
+            "vertex_region": self.llm.vertex_region or self.gcp.region,
             "output_language": "English",
             "max_debate_rounds": 1,
             "max_risk_discuss_rounds": 1,
@@ -177,6 +240,9 @@ class SystemSettings(BaseSettingsModel):
             },
             "tool_vendors": {},
         }
+        if not self.llm.backend_url:
+            config.pop("backend_url", None)
+        return config
 
 
 def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -235,6 +301,9 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "quick_model": os.getenv("TRADINGAGENTS_LLM_QUICK_MODEL"),
             "reasoning_effort": os.getenv("TRADINGAGENTS_OPENAI_REASONING_EFFORT"),
             "backend_url": os.getenv("TRADINGAGENTS_BACKEND_URL"),
+            "vertex_project": os.getenv("TRADINGAGENTS_VERTEX_PROJECT"),
+            "vertex_region": os.getenv("TRADINGAGENTS_VERTEX_REGION"),
+            "google_thinking_level": os.getenv("TRADINGAGENTS_GOOGLE_THINKING_LEVEL"),
         },
         "run": {
             "default_shortlist_size": _env_int("TRADINGAGENTS_SHORTLIST_SIZE"),
@@ -276,6 +345,17 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "commission_per_order": _env_float("TRADINGAGENTS_COMMISSION_PER_ORDER"),
             "allow_fractional_shares": _env_bool("TRADINGAGENTS_ALLOW_FRACTIONAL_SHARES"),
         },
+        "gcp": {
+            "project_id": os.getenv("TRADINGAGENTS_GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT"),
+            "region": os.getenv("TRADINGAGENTS_GCP_REGION") or os.getenv("GOOGLE_CLOUD_REGION"),
+            "zone": os.getenv("TRADINGAGENTS_GCP_ZONE"),
+            "vm_name": os.getenv("TRADINGAGENTS_GCP_VM_NAME"),
+            "bucket_name": os.getenv("TRADINGAGENTS_GCS_BUCKET"),
+            "service_account_name": os.getenv("TRADINGAGENTS_GCP_SERVICE_ACCOUNT_NAME"),
+            "publish_on_run": _env_bool("TRADINGAGENTS_PUBLISH_ON_RUN"),
+            "reports_prefix": os.getenv("TRADINGAGENTS_GCS_REPORTS_PREFIX"),
+            "snapshots_prefix": os.getenv("TRADINGAGENTS_GCS_SNAPSHOTS_PREFIX"),
+        },
     }
 
     def _drop_none(obj: Any) -> Any:
@@ -294,6 +374,7 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "risk": merged.get("risk", {}),
             "paper": merged.get("paper", {}),
             "storage": storage.model_dump(),
+            "gcp": merged.get("gcp", {}),
             "paths": _paths_from_storage(REPO_ROOT, storage).model_dump(),
         }
     )
