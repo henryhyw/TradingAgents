@@ -17,8 +17,11 @@ dependencies = [
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
     "pandas>=2.3.0",
+    "pandas-market-calendars>=4.4.1",
     "parsel>=1.10.0",
+    "pydantic>=2.9.2",
     "pytz>=2025.2",
+    "python-dotenv>=1.0.1",
     "questionary>=2.1.0",
     "rank-bm25>=0.2.2",
     "redis>=6.2.0",
@@ -33,10 +36,26 @@ dependencies = [
 ]
 
 [project.scripts]
-tradingagents = "cli.main:app"
+tradingagents = "tradingagents.system.cli:app"
+tradingagents-legacy = "cli.main:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+    "ruff>=0.8.6",
+]
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*", "cli*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
+tradingagents = ["system/assets/*.toml", "system/universe/*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

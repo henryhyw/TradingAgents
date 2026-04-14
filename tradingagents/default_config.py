@@ -8,12 +8,12 @@ DEFAULT_CONFIG = {
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
     # LLM settings
     "llm_provider": "openai",
-    "deep_think_llm": "gpt-5.4",
-    "quick_think_llm": "gpt-5.4-mini",
+    "deep_think_llm": "gpt-5.4-nano",
+    "quick_think_llm": "gpt-5.4-nano",
     "backend_url": "https://api.openai.com/v1",
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
-    "openai_reasoning_effort": None,    # "medium", "high", "low"
+    "openai_reasoning_effort": "low",   # "medium", "high", "low"
     "anthropic_effort": None,           # "high", "medium", "low"
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality

@@ -1,0 +1,45 @@
+[llm]
+provider = "openai"
+model = "gpt-5.4-nano"
+deep_model = "gpt-5.4-nano"
+quick_model = "gpt-5.4-nano"
+reasoning_effort = "low"
+temperature = 0.0
+
+[run]
+default_shortlist_size = 8
+market_timezone = "America/New_York"
+report_timezone = "America/New_York"
+research_analysts = ["market", "news", "fundamentals"]
+loop_sleep_seconds = 60
+
+[data]
+provider = "yfinance"
+history_lookback_days = 260
+screen_lookback_days = 90
+shortlist_min_history_days = 60
+min_price = 10.0
+min_avg_dollar_volume = 20000000.0
+max_news_items = 8
+cache_ttl_hours = 12
+earnings_blackout_days = 3
+
+[risk]
+long_only = true
+max_position_size_fraction = 0.05
+max_gross_exposure_fraction = 0.30
+daily_loss_limit_fraction = 0.02
+max_new_opening_trades_per_symbol_per_day = 1
+stop_opening_after_losing_exits = 3
+minimum_cash_buffer_fraction = 0.05
+
+[paper]
+starting_cash = 100000.0
+fill_model = "same_bar_close"
+slippage_bps = 10.0
+commission_per_order = 1.0
+allow_fractional_shares = false
+
+[storage]
+home_subdir = ".tradingagents"
+database_name = "tradingagents.db"

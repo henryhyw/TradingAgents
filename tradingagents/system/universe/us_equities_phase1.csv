@@ -1,0 +1,149 @@
+symbol,name,asset_type,sector
+SPY,SPDR S&P 500 ETF Trust,ETF,Broad Market
+VOO,Vanguard S&P 500 ETF,ETF,Broad Market
+IVV,iShares Core S&P 500 ETF,ETF,Broad Market
+VTI,Vanguard Total Stock Market ETF,ETF,Broad Market
+QQQ,Invesco QQQ Trust,ETF,Large Cap Growth
+DIA,SPDR Dow Jones Industrial Average ETF,ETF,Broad Market
+IWM,iShares Russell 2000 ETF,ETF,Small Cap
+XLK,Technology Select Sector SPDR Fund,ETF,Technology
+XLF,Financial Select Sector SPDR Fund,ETF,Financials
+XLV,Health Care Select Sector SPDR Fund,ETF,Health Care
+XLI,Industrial Select Sector SPDR Fund,ETF,Industrials
+XLY,Consumer Discretionary Select Sector SPDR Fund,ETF,Consumer Discretionary
+XLP,Consumer Staples Select Sector SPDR Fund,ETF,Consumer Staples
+XLE,Energy Select Sector SPDR Fund,ETF,Energy
+XLU,Utilities Select Sector SPDR Fund,ETF,Utilities
+XLB,Materials Select Sector SPDR Fund,ETF,Materials
+XLRE,Real Estate Select Sector SPDR Fund,ETF,Real Estate
+XLC,Communication Services Select Sector SPDR Fund,ETF,Communication Services
+SMH,VanEck Semiconductor ETF,ETF,Semiconductors
+SOXX,iShares Semiconductor ETF,ETF,Semiconductors
+AAPL,Apple Inc.,Equity,Technology
+MSFT,Microsoft Corporation,Equity,Technology
+NVDA,NVIDIA Corporation,Equity,Technology
+AMZN,Amazon.com Inc.,Equity,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,Equity,Communication Services
+META,Meta Platforms Inc.,Equity,Communication Services
+BRK-B,Berkshire Hathaway Inc. Class B,Equity,Financials
+JPM,JPMorgan Chase & Co.,Equity,Financials
+V,Visa Inc.,Equity,Financials
+MA,Mastercard Inc.,Equity,Financials
+BAC,Bank of America Corporation,Equity,Financials
+GS,Goldman Sachs Group Inc.,Equity,Financials
+MS,Morgan Stanley,Equity,Financials
+AXP,American Express Company,Equity,Financials
+BLK,BlackRock Inc.,Equity,Financials
+SCHW,Charles Schwab Corporation,Equity,Financials
+C,Citigroup Inc.,Equity,Financials
+PNC,PNC Financial Services Group Inc.,Equity,Financials
+USB,U.S. Bancorp,Equity,Financials
+CB,Chubb Limited,Equity,Financials
+SPGI,S&P Global Inc.,Equity,Financials
+ICE,Intercontinental Exchange Inc.,Equity,Financials
+UNH,UnitedHealth Group Incorporated,Equity,Health Care
+LLY,Eli Lilly and Company,Equity,Health Care
+JNJ,Johnson & Johnson,Equity,Health Care
+ABBV,AbbVie Inc.,Equity,Health Care
+MRK,Merck & Co. Inc.,Equity,Health Care
+PFE,Pfizer Inc.,Equity,Health Care
+ABT,Abbott Laboratories,Equity,Health Care
+TMO,Thermo Fisher Scientific Inc.,Equity,Health Care
+DHR,Danaher Corporation,Equity,Health Care
+ISRG,Intuitive Surgical Inc.,Equity,Health Care
+SYK,Stryker Corporation,Equity,Health Care
+MDT,Medtronic plc,Equity,Health Care
+AMGN,Amgen Inc.,Equity,Health Care
+GILD,Gilead Sciences Inc.,Equity,Health Care
+REGN,Regeneron Pharmaceuticals Inc.,Equity,Health Care
+VRTX,Vertex Pharmaceuticals Incorporated,Equity,Health Care
+WMT,Walmart Inc.,Equity,Consumer Staples
+COST,Costco Wholesale Corporation,Equity,Consumer Staples
+PG,Procter & Gamble Company,Equity,Consumer Staples
+KO,Coca-Cola Company,Equity,Consumer Staples
+PEP,PepsiCo Inc.,Equity,Consumer Staples
+PM,Philip Morris International Inc.,Equity,Consumer Staples
+MO,Altria Group Inc.,Equity,Consumer Staples
+CL,Colgate-Palmolive Company,Equity,Consumer Staples
+KMB,Kimberly-Clark Corporation,Equity,Consumer Staples
+GIS,General Mills Inc.,Equity,Consumer Staples
+MDLZ,Mondelez International Inc.,Equity,Consumer Staples
+MCD,McDonald's Corporation,Equity,Consumer Discretionary
+HD,Home Depot Inc.,Equity,Consumer Discretionary
+LOW,Lowe's Companies Inc.,Equity,Consumer Discretionary
+NKE,NIKE Inc.,Equity,Consumer Discretionary
+SBUX,Starbucks Corporation,Equity,Consumer Discretionary
+BKNG,Booking Holdings Inc.,Equity,Consumer Discretionary
+TJX,TJX Companies Inc.,Equity,Consumer Discretionary
+TGT,Target Corporation,Equity,Consumer Discretionary
+ROST,Ross Stores Inc.,Equity,Consumer Discretionary
+ORLY,O'Reilly Automotive Inc.,Equity,Consumer Discretionary
+AZO,AutoZone Inc.,Equity,Consumer Discretionary
+GM,General Motors Company,Equity,Consumer Discretionary
+F,Ford Motor Company,Equity,Consumer Discretionary
+UBER,Uber Technologies Inc.,Equity,Consumer Discretionary
+DIS,Walt Disney Company,Equity,Communication Services
+NFLX,Netflix Inc.,Equity,Communication Services
+CMCSA,Comcast Corporation,Equity,Communication Services
+TMUS,T-Mobile US Inc.,Equity,Communication Services
+VZ,Verizon Communications Inc.,Equity,Communication Services
+T,AT&T Inc.,Equity,Communication Services
+TTWO,Take-Two Interactive Software Inc.,Equity,Communication Services
+EA,Electronic Arts Inc.,Equity,Communication Services
+CSCO,Cisco Systems Inc.,Equity,Technology
+ORCL,Oracle Corporation,Equity,Technology
+CRM,Salesforce Inc.,Equity,Technology
+ACN,Accenture plc,Equity,Technology
+IBM,International Business Machines Corporation,Equity,Technology
+ADBE,Adobe Inc.,Equity,Technology
+INTU,Intuit Inc.,Equity,Technology
+AMD,Advanced Micro Devices Inc.,Equity,Technology
+QCOM,QUALCOMM Incorporated,Equity,Technology
+TXN,Texas Instruments Incorporated,Equity,Technology
+MU,Micron Technology Inc.,Equity,Technology
+AMAT,Applied Materials Inc.,Equity,Technology
+LRCX,Lam Research Corporation,Equity,Technology
+KLAC,KLA Corporation,Equity,Technology
+PANW,Palo Alto Networks Inc.,Equity,Technology
+CRWD,CrowdStrike Holdings Inc.,Equity,Technology
+FTNT,Fortinet Inc.,Equity,Technology
+SNOW,Snowflake Inc.,Equity,Technology
+NOW,ServiceNow Inc.,Equity,Technology
+PLTR,Palantir Technologies Inc.,Equity,Technology
+ANET,Arista Networks Inc.,Equity,Technology
+GE,GE Aerospace,Equity,Industrials
+CAT,Caterpillar Inc.,Equity,Industrials
+RTX,RTX Corporation,Equity,Industrials
+BA,Boeing Company,Equity,Industrials
+HON,Honeywell International Inc.,Equity,Industrials
+DE,Deere & Company,Equity,Industrials
+ETN,Eaton Corporation plc,Equity,Industrials
+PH,Parker-Hannifin Corporation,Equity,Industrials
+UPS,United Parcel Service Inc. Class B,Equity,Industrials
+FDX,FedEx Corporation,Equity,Industrials
+UNP,Union Pacific Corporation,Equity,Industrials
+NSC,Norfolk Southern Corporation,Equity,Industrials
+LMT,Lockheed Martin Corporation,Equity,Industrials
+MMM,3M Company,Equity,Industrials
+XOM,Exxon Mobil Corporation,Equity,Energy
+CVX,Chevron Corporation,Equity,Energy
+COP,ConocoPhillips,Equity,Energy
+SLB,Schlumberger N.V.,Equity,Energy
+EOG,EOG Resources Inc.,Equity,Energy
+OXY,Occidental Petroleum Corporation,Equity,Energy
+MPC,Marathon Petroleum Corporation,Equity,Energy
+PSX,Phillips 66,Equity,Energy
+LIN,Linde plc,Equity,Materials
+SHW,Sherwin-Williams Company,Equity,Materials
+FCX,Freeport-McMoRan Inc.,Equity,Materials
+APD,Air Products and Chemicals Inc.,Equity,Materials
+NEM,Newmont Corporation,Equity,Materials
+PLD,Prologis Inc.,Equity,Real Estate
+AMT,American Tower Corporation,Equity,Real Estate
+EQIX,Equinix Inc.,Equity,Real Estate
+O,Realty Income Corporation,Equity,Real Estate
+NEE,NextEra Energy Inc.,Equity,Utilities
+DUK,Duke Energy Corporation,Equity,Utilities
+SO,Southern Company,Equity,Utilities
+AEP,American Electric Power Company Inc.,Equity,Utilities
+EXC,Exelon Corporation,Equity,Utilities
