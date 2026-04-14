@@ -157,9 +157,36 @@ Final trade decision:
             ),
         )
 
+    def _research_error_fallback(self, symbol: str, as_of_date: date, exc: Exception) -> ResearchDecision:
+        return ResearchDecision(
+            symbol=symbol,
+            as_of_date=as_of_date,
+            action=TradeAction.HOLD,
+            confidence=0.05,
+            thesis=f"Research adapter fallback: upstream graph failed with {type(exc).__name__}.",
+            risk_flags=[f"research_error:{type(exc).__name__}", "upstream_graph_failure"],
+            invalidation_conditions=["Retry after API/data recovery."],
+            time_horizon="N/A",
+            desired_position_fraction=0.0,
+            source_metadata=SourceMetadata(
+                research_adapter="tradingagents_graph",
+                llm_provider=self.settings.llm.provider,
+                llm_model=self.settings.llm.quick_model,
+                parser_mode="research_error_fallback",
+                upstream_rating="HOLD",
+                upstream_artifact_path=None,
+                notes=[str(exc)[:300]],
+                extra={},
+            ),
+        )
+
     def research(self, symbol: str, as_of_date: date) -> ResearchDecision:
-        graph = self._ensure_graph()
-        final_state, rating = graph.propagate(symbol, as_of_date.isoformat())
+        try:
+            graph = self._ensure_graph()
+            final_state, rating = graph.propagate(symbol, as_of_date.isoformat())
+        except Exception as exc:
+            logger.error("Upstream research failed for %s on %s: %s", symbol, as_of_date, exc)
+            return self._research_error_fallback(symbol, as_of_date, exc)
         normalized_rating = normalize_rating(str(rating))
         artifact_path = self._artifact_path(symbol, as_of_date)
         try:

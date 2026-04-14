@@ -35,7 +35,9 @@ class RunSettings(BaseSettingsModel):
     default_shortlist_size: PositiveInt = 8
     market_timezone: str = "America/New_York"
     report_timezone: str = "America/New_York"
-    research_analysts: list[str] = Field(default_factory=lambda: ["market", "news", "fundamentals"])
+    research_analysts: list[str] = Field(default_factory=lambda: ["market", "social", "news", "fundamentals"])
+    max_shortlist_per_sector: PositiveInt = 2
+    portfolio_rebalance_buffer: float = 0.0025
     loop_sleep_seconds: PositiveInt = 60
 
 
@@ -49,6 +51,27 @@ class DataSettings(BaseSettingsModel):
     max_news_items: PositiveInt = 8
     cache_ttl_hours: PositiveInt = 12
     earnings_blackout_days: PositiveInt = 3
+    correlation_lookback_days: PositiveInt = 90
+    universe_min_observations: PositiveInt = 60
+    regime_proxies: list[str] = Field(
+        default_factory=lambda: [
+            "SPY",
+            "QQQ",
+            "IWM",
+            "XLK",
+            "XLF",
+            "XLI",
+            "XLY",
+            "XLU",
+            "XLP",
+            "TLT",
+            "IEF",
+            "UUP",
+            "GLD",
+            "USO",
+            "^VIX",
+        ]
+    )
 
 
 class RiskSettings(BaseSettingsModel):
@@ -59,6 +82,19 @@ class RiskSettings(BaseSettingsModel):
     max_new_opening_trades_per_symbol_per_day: PositiveInt = 1
     stop_opening_after_losing_exits: PositiveInt = 3
     minimum_cash_buffer_fraction: float = 0.05
+    max_sector_exposure_fraction: float = 0.15
+    max_single_theme_positions: PositiveInt = 3
+    correlation_threshold: float = 0.85
+    high_correlation_scale: float = 0.6
+    volatility_target_annual: float = 0.28
+    volatility_floor_annual: float = 0.12
+    volatility_ceiling_annual: float = 0.60
+    cooldown_days_after_loss: PositiveInt = 2
+    cooldown_days_after_rejection: PositiveInt = 1
+    regime_risk_on_multiplier: float = 1.10
+    regime_balanced_multiplier: float = 1.00
+    regime_risk_off_multiplier: float = 0.70
+    regime_high_vol_multiplier: float = 0.50
 
 
 class PaperSettings(BaseSettingsModel):
@@ -196,6 +232,8 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "default_shortlist_size": _env_int("TRADINGAGENTS_SHORTLIST_SIZE"),
             "market_timezone": os.getenv("TRADINGAGENTS_MARKET_TIMEZONE"),
             "report_timezone": os.getenv("TRADINGAGENTS_REPORT_TIMEZONE"),
+            "max_shortlist_per_sector": _env_int("TRADINGAGENTS_MAX_SHORTLIST_PER_SECTOR"),
+            "portfolio_rebalance_buffer": _env_float("TRADINGAGENTS_REBALANCE_BUFFER"),
             "loop_sleep_seconds": _env_int("TRADINGAGENTS_LOOP_SLEEP_SECONDS"),
         },
         "data": {
@@ -205,6 +243,7 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "screen_lookback_days": _env_int("TRADINGAGENTS_SCREEN_LOOKBACK_DAYS"),
             "max_news_items": _env_int("TRADINGAGENTS_MAX_NEWS_ITEMS"),
             "earnings_blackout_days": _env_int("TRADINGAGENTS_EARNINGS_BLACKOUT_DAYS"),
+            "correlation_lookback_days": _env_int("TRADINGAGENTS_CORRELATION_LOOKBACK_DAYS"),
         },
         "risk": {
             "max_position_size_fraction": _env_float("TRADINGAGENTS_MAX_POSITION_SIZE"),
@@ -212,6 +251,9 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "daily_loss_limit_fraction": _env_float("TRADINGAGENTS_DAILY_LOSS_LIMIT"),
             "stop_opening_after_losing_exits": _env_int("TRADINGAGENTS_MAX_LOSING_EXITS_PER_DAY"),
             "minimum_cash_buffer_fraction": _env_float("TRADINGAGENTS_MIN_CASH_BUFFER"),
+            "max_sector_exposure_fraction": _env_float("TRADINGAGENTS_MAX_SECTOR_EXPOSURE"),
+            "correlation_threshold": _env_float("TRADINGAGENTS_CORRELATION_THRESHOLD"),
+            "volatility_target_annual": _env_float("TRADINGAGENTS_VOL_TARGET"),
         },
         "paper": {
             "starting_cash": _env_float("TRADINGAGENTS_STARTING_CASH"),

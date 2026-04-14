@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -42,6 +42,8 @@ class TimeInForce(str, Enum):
 
 class OrderStatus(str, Enum):
     NEW = "new"
+    SUBMITTED = "submitted"
+    PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
@@ -53,6 +55,21 @@ class RunMode(str, Enum):
     PAPER = "paper"
     DAILY = "daily"
     REPLAY = "replay"
+
+
+class RegimeLabel(str, Enum):
+    RISK_ON = "risk_on"
+    BALANCED = "balanced"
+    RISK_OFF = "risk_off"
+    HIGH_VOLATILITY = "high_volatility"
+
+
+class OrderIntentType(str, Enum):
+    NEW_ENTRY = "new_entry"
+    ADD = "add"
+    TRIM = "trim"
+    EXIT = "exit"
+    HOLD = "hold"
 
 
 class SourceMetadata(StrictModel):
@@ -72,6 +89,201 @@ class ExecutionConstraints(StrictModel):
     max_slippage_bps: float = 10.0
     latest_acceptable_trade_date: date | None = None
     notes: list[str] = Field(default_factory=list)
+
+
+class RegimeSnapshot(StrictModel):
+    regime_snapshot_id: str = Field(default_factory=lambda: make_id("rg"))
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    label: RegimeLabel
+    volatility_regime: str
+    trend_regime: str
+    risk_on_score: float
+    risk_budget_multiplier: float
+    max_gross_exposure_fraction: float
+    signals: dict[str, float] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: str = "ok"
+
+    @field_validator("risk_on_score")
+    @classmethod
+    def _validate_risk_score(cls, value: float) -> float:
+        return max(-1.0, min(1.0, value))
+
+    @field_validator("risk_budget_multiplier")
+    @classmethod
+    def _validate_multiplier(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("risk_budget_multiplier must be positive")
+        return value
+
+    @field_validator("max_gross_exposure_fraction")
+    @classmethod
+    def _validate_gross_cap(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("max_gross_exposure_fraction must be between 0 and 1")
+        return value
+
+
+class CandidateAssessment(StrictModel):
+    candidate_id: str = Field(default_factory=lambda: make_id("ca"))
+    symbol: str
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    name: str
+    asset_type: str
+    sector: str
+    style_tags: list[str] = Field(default_factory=list)
+    benchmark_symbol: str | None = None
+    peer_group: str | None = None
+    eligible: bool
+    watchlist_only: bool = False
+    eligibility_reasons: list[str] = Field(default_factory=list)
+    close: float
+    avg_dollar_volume_20d: float
+    return_20d: float
+    return_60d: float
+    volatility_20d: float
+    relative_strength_20d: float = 0.0
+    regime_fit_score: float = 0.0
+    ranking_score: float = 0.0
+    ranking_breakdown: dict[str, float] = Field(default_factory=dict)
+    shortlist_reason: str | None = None
+    data_quality_warnings: list[str] = Field(default_factory=list)
+
+
+class AnalystMemo(StrictModel):
+    memo_id: str = Field(default_factory=lambda: make_id("am"))
+    symbol: str
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    role: str
+    signal: Literal["bullish", "bearish", "neutral", "mixed"] = "neutral"
+    confidence: float = 0.5
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("confidence")
+    @classmethod
+    def _validate_confidence(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+        return value
+
+
+class BullCaseMemo(StrictModel):
+    memo_id: str = Field(default_factory=lambda: make_id("bc"))
+    symbol: str
+    as_of_date: date
+    summary: str
+    catalysts: list[str] = Field(default_factory=list)
+    invalidation_conditions: list[str] = Field(default_factory=list)
+    conviction: float = 0.5
+
+    @field_validator("conviction")
+    @classmethod
+    def _validate_conviction(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("conviction must be between 0 and 1")
+        return value
+
+
+class BearCaseMemo(StrictModel):
+    memo_id: str = Field(default_factory=lambda: make_id("br"))
+    symbol: str
+    as_of_date: date
+    summary: str
+    risks: list[str] = Field(default_factory=list)
+    invalidation_conditions: list[str] = Field(default_factory=list)
+    conviction: float = 0.5
+
+    @field_validator("conviction")
+    @classmethod
+    def _validate_conviction(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("conviction must be between 0 and 1")
+        return value
+
+
+class DebateSummary(StrictModel):
+    debate_id: str = Field(default_factory=lambda: make_id("db"))
+    symbol: str
+    as_of_date: date
+    adjudication: str
+    winning_side: Literal["bull", "bear", "draw"]
+    confidence_balance: float = 0.5
+    falsifiers: list[str] = Field(default_factory=list)
+    key_points: list[str] = Field(default_factory=list)
+
+    @field_validator("confidence_balance")
+    @classmethod
+    def _validate_balance(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence_balance must be between 0 and 1")
+        return value
+
+
+class PortfolioFitAssessment(StrictModel):
+    fit_id: str = Field(default_factory=lambda: make_id("pfit"))
+    symbol: str
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    fits_portfolio: bool
+    recommended_action: OrderIntentType
+    current_weight: float = 0.0
+    target_weight: float = 0.0
+    rationale: str
+    conflicts: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("current_weight", "target_weight")
+    @classmethod
+    def _validate_weight(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("weights must be between 0 and 1")
+        return value
+
+
+class ExecutionPlan(StrictModel):
+    plan_id: str = Field(default_factory=lambda: make_id("ep"))
+    symbol: str
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    intent_type: OrderIntentType
+    side: OrderSide | None = None
+    target_weight: float = 0.0
+    quantity: int | None = None
+    order_type: OrderType = OrderType.MARKET
+    time_in_force: TimeInForce = TimeInForce.DAY
+    notes: list[str] = Field(default_factory=list)
+
+    @field_validator("target_weight")
+    @classmethod
+    def _validate_target_weight(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("target_weight must be between 0 and 1")
+        return value
+
+
+class ResearchBundle(StrictModel):
+    bundle_id: str = Field(default_factory=lambda: make_id("rb"))
+    symbol: str
+    as_of_date: date
+    timestamp: datetime = Field(default_factory=utc_now)
+    candidate_id: str | None = None
+    regime_snapshot_id: str | None = None
+    analyst_memos: list[AnalystMemo] = Field(default_factory=list)
+    bull_case: BullCaseMemo
+    bear_case: BearCaseMemo
+    debate_summary: DebateSummary
+    trader_note: str
+    risk_committee_note: str | None = None
+    portfolio_fit_id: str | None = None
+    execution_plan_id: str | None = None
+    final_decision_id: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ResearchDecision(StrictModel):
@@ -113,8 +325,11 @@ class RiskDecision(StrictModel):
     timestamp: datetime = Field(default_factory=utc_now)
     approved: bool
     approved_size_fraction: float = 0.0
+    proposed_size_fraction: float | None = None
     rejection_reason: str | None = None
     execution_constraints: ExecutionConstraints
+    committee_notes: list[str] = Field(default_factory=list)
+    risk_checks: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
     @field_validator("approved_size_fraction")
@@ -132,6 +347,8 @@ class OrderIntent(StrictModel):
     symbol: str
     side: OrderSide
     quantity: int
+    intent_type: OrderIntentType = OrderIntentType.NEW_ENTRY
+    target_position_fraction: float | None = None
     order_type: OrderType = OrderType.MARKET
     limit_price: float | None = None
     time_in_force: TimeInForce = TimeInForce.DAY
@@ -163,6 +380,7 @@ class OrderRecord(StrictModel):
     fill_timestamp: datetime | None = None
     commission: float = 0.0
     notes: list[str] = Field(default_factory=list)
+    lifecycle: list[str] = Field(default_factory=list)
 
 
 class FillRecord(StrictModel):
@@ -210,13 +428,19 @@ class DailyRunSummary(StrictModel):
     started_at: datetime
     completed_at: datetime
     status: str
+    universe_size: int = 0
+    eligible_universe_size: int = 0
+    regime_label: str | None = None
+    regime_risk_budget: float | None = None
     shortlisted_symbols: list[str] = Field(default_factory=list)
+    watchlist_symbols: list[str] = Field(default_factory=list)
     approved_symbols: list[str] = Field(default_factory=list)
     rejected_symbols: dict[str, str] = Field(default_factory=dict)
     orders_submitted: int = 0
     fills_completed: int = 0
     report_path: str | None = None
     notes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class HealthCheckResult(StrictModel):

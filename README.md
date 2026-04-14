@@ -1,88 +1,89 @@
-# TradingAgents Local Paper Trading System (US Equities, Phase 1)
+# TradingAgents Local Research & Paper Trading System (V2)
 
-This repository now contains a complete local-first paper-trading system built around the existing TradingAgents multi-agent research graph.
+This repository contains a local-first US equities research + risk + portfolio + paper execution system built on top of the upstream TradingAgents multi-agent graph.
 
-Phase 1 goals delivered:
-- Local macOS operation (Python and Docker)
+It is designed as a professional internal prototype:
+- Local macOS operation (Python and Docker workflow)
 - Default model: `gpt-5.4-nano`
 - Default data source: `yfinance`
-- Only required secret: `OPENAI_API_KEY`
-- Structured decisions, hard risk overrides, paper execution, SQLite persistence, logs, and reports
-- Clean broker abstraction for future Futu/OpenD migration
+- Phase-1 required secret: `OPENAI_API_KEY` only
+- Structured objects, hard deterministic risk controls, auditable SQLite artifacts, and paper execution
 
-## What This System Does
+## V2 Upgrade Summary
 
-On each run, the system:
-1. Loads a curated US universe (liquid stocks + major ETFs)
-2. Applies hard market-quality filters and ranking
-3. Runs multi-agent research on shortlisted symbols
-4. Parses research into validated `ResearchDecision` objects
-5. Applies hard risk controls (`RiskDecision`) that override AI output
-6. Builds validated order intents
-7. Simulates paper execution (optional)
-8. Persists decisions, orders, fills, positions, and run summaries in SQLite
-9. Emits report artifacts and structured logs
+Compared with the prior phase-1 baseline, v2 adds:
+- Regime layer (`risk_on` / `balanced` / `risk_off` / `high_volatility`) from liquid proxy instruments
+- Multi-stage universe screening with richer ranking and shortlist reasons
+- Explicit multi-role research organization outputs:
+  - Universe Scout
+  - Market Regime Analyst
+  - Macro Proxy Analyst
+  - Technical Analyst
+  - Fundamental Analyst
+  - News/Event Analyst
+  - Sentiment/Narrative Analyst
+  - Bull Researcher
+  - Bear Researcher
+  - Debate / Adjudication Layer
+  - Trader
+- Structured research bundle persistence (not just top-level buy/sell/hold)
+- Upgraded risk committee logic:
+  - regime-aware risk budgeting
+  - sector concentration checks
+  - correlation-aware checks
+  - volatility-aware sizing
+  - symbol cooldown logic
+- Portfolio fit assessment + execution planning (new/add/trim/exit/hold)
+- Richer daily reports (markdown + JSON) with regime, discovery, debate, risk, portfolio fit, and execution sections
 
-## Architecture
-
-The new production-shaped implementation lives in `tradingagents/system`:
-
-- `config.py`: strongly typed settings + env/config loading
-- `schemas.py`: typed contracts (`ResearchDecision`, `RiskDecision`, `OrderIntent`, `OrderRecord`, `FillRecord`, `PositionSnapshot`, `DailyRunSummary`, etc.)
-- `universe/`: curated universe + screening + shortlist logic
-- `data/`: market data provider interface + yfinance implementation
-- `research/`: adapter around upstream TradingAgents graph + structured parser + deterministic fallback adapter
-- `risk/`: hard risk engine
-- `portfolio/`: intent sizing and portfolio translation logic
-- `execution/`: broker interface + fully working `PaperBroker` + production-shaped `FutuBroker` fail-safe adapter
-- `storage/`: SQLite schema + repository
-- `orchestration/`: run loop, scheduler, report generation
-- `cli.py`: operator CLI
-
-## Upstream Reuse vs New System Code
+## What Is Reused vs Added
 
 Reused from upstream TradingAgents:
-- Multi-agent research graph and agent role structure (`tradingagents/graph/*`, `tradingagents/agents/*`)
-- LLM client stack (`tradingagents/llm_clients/*`)
-- Existing yfinance/market tooling where relevant
+- Upstream multi-agent graph and debate/risk discussion backbone (`tradingagents/graph/*`, `tradingagents/agents/*`)
+- Upstream LLM client integration
+- Existing dataflow tooling used by upstream graph
 
-Wrapped/refactored/added for this system:
-- Stable research adapter boundary (`tradingagents/system/research/adapter.py`)
-- Full structured contracts and persistence
-- Hard risk engine and sizing constraints
-- Real paper broker simulation and state handling
-- Universe construction/screening and shortlist gating
-- New operator CLI and daily scheduler
-- Reporting, logging, tests, and runbook-quality docs
+Added/extended in this local system:
+- `tradingagents/system/*` architecture (config, schemas, storage, orchestration, CLI)
+- Stable adapter around upstream graph for controlled production-like flows
+- Regime, universe ranking, risk committee, portfolio manager, execution planner, reporting, and tests
 
-## Repository Layout (Key Paths)
+## Architecture (V2)
 
-```text
-tradingagents/
-  system/
-    assets/defaults.toml
-    cli.py
-    config.py
-    schemas.py
-    data/
-    execution/
-    monitoring/
-    orchestration/
-    portfolio/
-    research/
-    risk/
-    storage/
-    universe/us_equities_phase1.csv
-tests/
-  test_system_*.py
-  system_helpers.py
-```
+`tradingagents/system`:
 
-## Prerequisites (macOS)
+- `config.py`: typed config loading from defaults + env
+- `schemas.py`: strongly typed contracts
+  - Existing: `ResearchDecision`, `RiskDecision`, `OrderIntent`, `OrderRecord`, `FillRecord`, `PortfolioSnapshot`, `DailyRunSummary`
+  - V2 additions: `RegimeSnapshot`, `CandidateAssessment`, `AnalystMemo`, `BullCaseMemo`, `BearCaseMemo`, `DebateSummary`, `ResearchBundle`, `PortfolioFitAssessment`, `ExecutionPlan`
+- `context/regime.py`: market regime model from liquid proxies
+- `universe/selector.py`: screening, ranking, shortlist generation with explainability
+- `data/yfinance_provider.py`: default market/fundamentals/news/events provider
+- `research/adapter.py`: upstream graph adapter and safe fallbacks
+- `research/organization.py`: multi-role research orchestration + structured bundle
+- `risk/engine.py`: hard deterministic risk committee logic
+- `portfolio/service.py`: portfolio fit + target-weight translation + execution plan
+- `execution/paper.py`: paper broker with persisted state and fill assumptions
+- `execution/futu.py`: production-shaped fail-safe live broker stub (disabled in phase-1)
+- `storage/db.py` + `storage/repository.py`: SQLite schema and persistence APIs
+- `orchestration/runner.py`: run loop, replay, storage-backed report generation
+- `orchestration/reporting.py`: rich markdown/json report generation
+- `cli.py`: operator commands
+
+## Data and Execution Constraints
+
+Hard constraints retained:
+- No Alpha Vantage requirement
+- No paid market data requirement
+- No Futu credentials required
+- No live broker required
+- Paper trading is the required execution mode
+
+## Prerequisites
 
 - Python 3.10+ (3.12 recommended)
-- Docker Desktop (for Docker mode)
-- Internet access for yfinance + OpenAI API
+- Docker Desktop (optional runtime path)
+- Internet access (yfinance and OpenAI APIs)
 
 ## Setup (Local Python)
 
@@ -93,31 +94,19 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env`:
+Set:
 
 ```bash
 OPENAI_API_KEY=your_key_here
 ```
 
-Initialize local state:
+Bootstrap local state:
 
 ```bash
 tradingagents setup
 ```
 
-## First Run Commands
-
-First dry-run (research + risk, no execution):
-
-```bash
-tradingagents dry-run --as-of 2026-04-13
-```
-
-First paper-trading run (simulated execution enabled):
-
-```bash
-tradingagents run-once --as-of 2026-04-13 --execute
-```
+## Exact Commands
 
 Health check:
 
@@ -125,42 +114,63 @@ Health check:
 tradingagents health-check
 ```
 
-## Operator CLI
+Inspect loaded config:
 
-Available commands:
+```bash
+tradingagents show-config
+```
 
-- `tradingagents setup` (alias of `bootstrap`)
-- `tradingagents bootstrap`
-- `tradingagents health-check`
-- `tradingagents run-once`
-- `tradingagents dry-run`
-- `tradingagents run-daily --run-at 15:45` (America/New_York clock)
-- `tradingagents replay --start YYYY-MM-DD --end YYYY-MM-DD`
-- `tradingagents show-positions`
-- `tradingagents show-recent-orders`
-- `tradingagents generate-daily-report --as-of YYYY-MM-DD`
+One-shot dry run:
 
-Legacy upstream interactive CLI remains available:
+```bash
+tradingagents dry-run --as-of 2026-04-13
+```
+
+One-shot paper run:
+
+```bash
+tradingagents run-once --as-of 2026-04-13 --execute
+```
+
+Daily scheduler:
+
+```bash
+tradingagents run-daily --run-at 15:45
+```
+
+Replay/backfill:
+
+```bash
+tradingagents replay --start 2026-04-01 --end 2026-04-10 --no-execute
+```
+
+Portfolio and orders:
+
+```bash
+tradingagents show-positions
+tradingagents show-recent-orders --limit 20
+```
+
+Regime and candidate inspection:
+
+```bash
+tradingagents show-regime --as-of 2026-04-13
+tradingagents show-candidates --as-of 2026-04-13 --limit 20
+```
+
+Regenerate report from persisted artifacts:
+
+```bash
+tradingagents generate-daily-report --as-of 2026-04-13
+```
+
+Legacy upstream CLI (kept):
 
 ```bash
 tradingagents-legacy
 ```
 
-## Data, DB, Logs, Reports
-
-Default storage root:
-
-- `~/.tradingagents/`
-
-Important files/directories:
-
-- SQLite DB: `~/.tradingagents/db/tradingagents.db`
-- Market cache: `~/.tradingagents/cache/`
-- Structured logs: `~/.tradingagents/logs/tradingagents-system.log`
-- Reports: `~/.tradingagents/reports/<YYYY-MM-DD>/summary.md` and `summary.json`
-- Upstream graph artifacts: `~/.tradingagents/artifacts/`
-
-## Docker Usage
+## Docker Commands
 
 Build:
 
@@ -168,13 +178,13 @@ Build:
 docker compose build
 ```
 
-Health check in container:
+Health check:
 
 ```bash
 docker compose run --rm tradingagents health-check
 ```
 
-Dry-run:
+Dry run:
 
 ```bash
 docker compose run --rm tradingagents dry-run --as-of 2026-04-13
@@ -186,82 +196,93 @@ Paper run:
 docker compose run --rm tradingagents run-once --as-of 2026-04-13 --execute
 ```
 
-Docker persistence:
-- Compose mounts volume `tradingagents_data` to `/home/appuser/.tradingagents` in the container.
+Persistence:
+- Volume `tradingagents_data` mounts to `/home/appuser/.tradingagents`
 
-## Configuration
+## Storage Layout
 
-Default settings live in:
+Default root: `~/.tradingagents`
 
-- `tradingagents/system/assets/defaults.toml`
+- SQLite: `~/.tradingagents/db/tradingagents.db`
+- Cache: `~/.tradingagents/cache`
+- Logs: `~/.tradingagents/logs/tradingagents-system.log`
+- Reports: `~/.tradingagents/reports/<YYYY-MM-DD>/summary.md` and `summary.json`
+- Upstream artifacts: `~/.tradingagents/artifacts`
 
-Runtime overrides are supported via environment variables, including:
+## V2 Research Pipeline
 
-- `TRADINGAGENTS_LLM_MODEL`
-- `TRADINGAGENTS_LLM_DEEP_MODEL`
-- `TRADINGAGENTS_LLM_QUICK_MODEL`
-- `TRADINGAGENTS_SHORTLIST_SIZE`
-- `TRADINGAGENTS_STARTING_CASH`
-- `TRADINGAGENTS_MAX_POSITION_SIZE`
-- `TRADINGAGENTS_MAX_GROSS_EXPOSURE`
-- `TRADINGAGENTS_DAILY_LOSS_LIMIT`
+Per candidate, v2 persists:
+- `CandidateAssessment` (screening + ranking evidence)
+- multi-role `AnalystMemo` set
+- `BullCaseMemo`
+- `BearCaseMemo`
+- `DebateSummary`
+- final `ResearchDecision`
+- `ResearchBundle` tying the above together
 
-## Risk Rules (Phase 1 Defaults)
+## V2 Risk and Portfolio Logic
 
-- Long-only
-- Max position size: 5% of equity
-- Max gross exposure: 30% of equity
-- Min price: $10
-- Min liquidity: 20-day average dollar volume threshold
-- Max one new opening trade per symbol per day
-- Stop opening new positions after 3 losing exits in the same day
-- Daily loss guardrail: 2%
-- Earnings blackout attempt (best-effort from yfinance events)
-- AI decisions cannot bypass these rules
+Risk committee is deterministic and non-bypassable:
+- Existing hard rules remain (long-only, max position, max gross, daily loss guardrail, liquidity floor, earnings blackout best effort)
+- Added regime-aware gross budgeting
+- Added sector concentration checks
+- Added correlation-aware controls
+- Added volatility-aware sizing
+- Added symbol cooldown checks
 
-## Execution Model (Paper Broker)
+Portfolio manager adds:
+- fit assessment (`PortfolioFitAssessment`)
+- target weight translation
+- action type (`new_entry`, `add`, `trim`, `exit`, `hold`)
+- execution shaping (`ExecutionPlan`)
 
-- Fill model: `same_bar_close`
-- Slippage: configurable (`slippage_bps`)
-- Commission: configurable (`commission_per_order`)
-- Cash/positions/orders/fills persisted in SQLite
-- Deterministic bar-based simulation assumptions (documented in config)
+## Reporting
 
-## Testing and Quality
+Each daily report includes:
+- regime summary
+- universe/discovery summary
+- shortlist with reasons
+- research + bull/bear + debate summary
+- risk committee decisions
+- portfolio fit and execution planner outputs
+- orders/fills
+- end-of-day portfolio snapshot
+- concentration summary
+- warnings/data quality notes
 
-Run tests:
+Outputs:
+- human markdown: `summary.md`
+- machine JSON: `summary.json`
 
-```bash
-pytest -q
-```
+## Quality Commands
 
-Run lint:
+Lint:
 
 ```bash
 ruff check tradingagents/system tests
 ```
 
-Test coverage includes:
-- Schema validation
-- Risk engine behavior
-- Paper broker behavior
-- Research parser and deterministic adapter behavior
-- End-to-end dry-run smoke orchestration
+Tests:
 
-## Current Limitations
+```bash
+pytest -q
+```
 
-- yfinance can intermittently fail or throttle; code now degrades safely, but data completeness can vary.
-- Earnings blackout is best-effort with no paid event feed.
-- Paper fills are simulation, not broker market microstructure.
-- Strategy is phase-1 long-only swing/daily style (no options/HFT/live broker routing).
+## Limitations (No Extra Vendor)
 
-## Futu/OpenD Phase-2 Path
+Because phase-1 data is yfinance-only:
+- Data quality can be inconsistent (missing fundamentals/news/events, transient API/TLS/network issues)
+- Earnings/event coverage is best effort, not institutional-grade event data
+- Correlation and regime models are approximations from public proxies
+- Paper fills are bar-based simulation, not broker microstructure
 
-`FutuBroker` interface and config shape are already present in `tradingagents/system/execution/futu.py`.
+The system degrades safely and records warnings when evidence is weak.
 
-What is intentionally disabled in phase 1:
-- Live Futu connectivity
-- Credentialed live order routing
-- Live account startup checks
+## Deferred to Phase-2 (Intentional)
 
-When phase-2 credentials/connectivity are available, swap `PaperBroker` with `FutuBroker` behind the existing broker interface and keep the same orchestration/risk/storage layers.
+Still intentionally disabled:
+- Live Futu OpenD connectivity
+- Real broker order routing
+- Live account startup checks and credentialed live safeguards
+
+The `BrokerAdapter` abstraction and `FutuBroker` shape are present so phase-2 can swap execution backends without replacing research/risk/storage/reporting layers.

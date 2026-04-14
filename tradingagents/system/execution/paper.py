@@ -103,7 +103,8 @@ class PaperBroker(BrokerAdapter):
                 time_in_force=intent.time_in_force,
                 status=OrderStatus.REJECTED,
                 commission=0.0,
-                notes=["missing_market_data"],
+                notes=["missing_market_data"] + intent.notes,
+                lifecycle=["new", "rejected"],
             )
             self.repository.save_order_record(order)
             return order, None
@@ -125,7 +126,8 @@ class PaperBroker(BrokerAdapter):
                     time_in_force=intent.time_in_force,
                     status=OrderStatus.REJECTED,
                     commission=0.0,
-                    notes=["insufficient_cash"],
+                    notes=["insufficient_cash"] + intent.notes,
+                    lifecycle=["new", "rejected"],
                 )
                 self.repository.save_order_record(order)
                 return order, None
@@ -148,7 +150,8 @@ class PaperBroker(BrokerAdapter):
                     time_in_force=intent.time_in_force,
                     status=OrderStatus.REJECTED,
                     commission=0.0,
-                    notes=["insufficient_position"],
+                    notes=["insufficient_position"] + intent.notes,
+                    lifecycle=["new", "rejected"],
                 )
                 self.repository.save_order_record(order)
                 return order, None
@@ -170,6 +173,7 @@ class PaperBroker(BrokerAdapter):
             fill_price=fill_price,
             commission=commission,
             notes=intent.notes,
+            lifecycle=["new", "submitted", "filled"],
         )
         fill = FillRecord(
             order_id=order.order_id,

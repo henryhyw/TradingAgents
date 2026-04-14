@@ -7,13 +7,18 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from tradingagents.system.schemas import (
+    CandidateAssessment,
     DailyRunSummary,
+    ExecutionPlan,
     FillRecord,
     OrderIntent,
     OrderRecord,
     OrderStatus,
     PortfolioSnapshot,
+    PortfolioFitAssessment,
     PositionSnapshot,
+    RegimeSnapshot,
+    ResearchBundle,
     ResearchDecision,
     RiskDecision,
 )
@@ -44,6 +49,43 @@ class TradingRepository:
     def _from_json(model_type: type[ModelT], payload: str) -> ModelT:
         return model_type.model_validate_json(payload)
 
+    def save_regime_snapshot(self, snapshot: RegimeSnapshot) -> None:
+        self._insert(
+            """
+            INSERT OR REPLACE INTO regime_snapshots
+            (regime_snapshot_id, as_of_date, timestamp, label, risk_budget_multiplier, max_gross_exposure_fraction, json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot.regime_snapshot_id,
+                snapshot.as_of_date.isoformat(),
+                snapshot.timestamp.isoformat(),
+                snapshot.label.value,
+                snapshot.risk_budget_multiplier,
+                snapshot.max_gross_exposure_fraction,
+                self._to_json(snapshot),
+            ),
+        )
+
+    def save_candidate_assessment(self, candidate: CandidateAssessment) -> None:
+        self._insert(
+            """
+            INSERT OR REPLACE INTO candidate_assessments
+            (candidate_id, symbol, as_of_date, eligible, watchlist_only, ranking_score, timestamp, json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate.candidate_id,
+                candidate.symbol,
+                candidate.as_of_date.isoformat(),
+                int(candidate.eligible),
+                int(candidate.watchlist_only),
+                candidate.ranking_score,
+                candidate.timestamp.isoformat(),
+                self._to_json(candidate),
+            ),
+        )
+
     def save_research_decision(self, decision: ResearchDecision) -> None:
         self._insert(
             """
@@ -60,6 +102,23 @@ class TradingRepository:
                 decision.confidence,
                 decision.thesis,
                 self._to_json(decision),
+            ),
+        )
+
+    def save_research_bundle(self, bundle: ResearchBundle) -> None:
+        self._insert(
+            """
+            INSERT OR REPLACE INTO research_bundles
+            (bundle_id, symbol, as_of_date, timestamp, final_decision_id, json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bundle.bundle_id,
+                bundle.symbol,
+                bundle.as_of_date.isoformat(),
+                bundle.timestamp.isoformat(),
+                bundle.final_decision_id,
+                self._to_json(bundle),
             ),
         )
 
@@ -101,6 +160,44 @@ class TradingRepository:
                 status.value,
                 intent.timestamp.isoformat(),
                 self._to_json(intent),
+            ),
+        )
+
+    def save_portfolio_fit_assessment(self, fit: PortfolioFitAssessment) -> None:
+        self._insert(
+            """
+            INSERT OR REPLACE INTO portfolio_fit_assessments
+            (fit_id, symbol, as_of_date, fits_portfolio, recommended_action, target_weight, timestamp, json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fit.fit_id,
+                fit.symbol,
+                fit.as_of_date.isoformat(),
+                int(fit.fits_portfolio),
+                fit.recommended_action.value,
+                fit.target_weight,
+                fit.timestamp.isoformat(),
+                self._to_json(fit),
+            ),
+        )
+
+    def save_execution_plan(self, plan: ExecutionPlan) -> None:
+        self._insert(
+            """
+            INSERT OR REPLACE INTO execution_plans
+            (plan_id, symbol, as_of_date, intent_type, side, target_weight, timestamp, json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan.plan_id,
+                plan.symbol,
+                plan.as_of_date.isoformat(),
+                plan.intent_type.value,
+                None if plan.side is None else plan.side.value,
+                plan.target_weight,
+                plan.timestamp.isoformat(),
+                self._to_json(plan),
             ),
         )
 
@@ -279,6 +376,35 @@ class TradingRepository:
             ).fetchone()
         return int(row["count"])
 
+    def has_recent_losing_exit(self, symbol: str, as_of_date: date, lookback_days: int) -> bool:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM fills
+                WHERE symbol = ?
+                  AND side = 'sell'
+                  AND realized_pnl < 0
+                  AND as_of_date BETWEEN date(?, ?) AND ?
+                """,
+                (symbol, as_of_date.isoformat(), f"-{lookback_days} day", as_of_date.isoformat()),
+            ).fetchone()
+        return int(row["count"]) > 0
+
+    def has_recent_rejection(self, symbol: str, as_of_date: date, lookback_days: int) -> bool:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM risk_decisions
+                WHERE symbol = ?
+                  AND approved = 0
+                  AND as_of_date BETWEEN date(?, ?) AND ?
+                """,
+                (symbol, as_of_date.isoformat(), f"-{lookback_days} day", as_of_date.isoformat()),
+            ).fetchone()
+        return int(row["count"]) > 0
+
     def get_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None:
         with connect(self.database_path) as connection:
             row = connection.execute(
@@ -317,6 +443,43 @@ class TradingRepository:
             return None
         return self._from_json(PortfolioSnapshot, row["json"])
 
+    def get_regime_snapshot_for_date(self, as_of_date: date) -> RegimeSnapshot | None:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT json
+                FROM regime_snapshots
+                WHERE as_of_date = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,
+                (as_of_date.isoformat(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._from_json(RegimeSnapshot, row["json"])
+
+    def list_candidate_assessments_for_date(self, as_of_date: date) -> list[CandidateAssessment]:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT json
+                FROM candidate_assessments
+                WHERE as_of_date = ?
+                ORDER BY timestamp DESC
+                """,
+                (as_of_date.isoformat(),),
+            ).fetchall()
+        deduped: list[CandidateAssessment] = []
+        seen: set[str] = set()
+        for row in rows:
+            candidate = self._from_json(CandidateAssessment, row["json"])
+            if candidate.symbol in seen:
+                continue
+            deduped.append(candidate)
+            seen.add(candidate.symbol)
+        return sorted(deduped, key=lambda item: item.ranking_score, reverse=True)
+
     def list_research_decisions_for_date(self, as_of_date: date) -> list[ResearchDecision]:
         with connect(self.database_path) as connection:
             rows = connection.execute(
@@ -324,6 +487,19 @@ class TradingRepository:
                 (as_of_date.isoformat(),),
             ).fetchall()
         return [self._from_json(ResearchDecision, row["json"]) for row in rows]
+
+    def list_research_bundles_for_date(self, as_of_date: date) -> list[ResearchBundle]:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT json
+                FROM research_bundles
+                WHERE as_of_date = ?
+                ORDER BY timestamp ASC
+                """,
+                (as_of_date.isoformat(),),
+            ).fetchall()
+        return [self._from_json(ResearchBundle, row["json"]) for row in rows]
 
     def list_risk_decisions_for_date(self, as_of_date: date) -> list[RiskDecision]:
         with connect(self.database_path) as connection:
@@ -337,6 +513,32 @@ class TradingRepository:
                 (as_of_date.isoformat(),),
             ).fetchall()
         return [self._from_json(RiskDecision, row["json"]) for row in rows]
+
+    def list_portfolio_fit_assessments_for_date(self, as_of_date: date) -> list[PortfolioFitAssessment]:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT json
+                FROM portfolio_fit_assessments
+                WHERE as_of_date = ?
+                ORDER BY timestamp ASC
+                """,
+                (as_of_date.isoformat(),),
+            ).fetchall()
+        return [self._from_json(PortfolioFitAssessment, row["json"]) for row in rows]
+
+    def list_execution_plans_for_date(self, as_of_date: date) -> list[ExecutionPlan]:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT json
+                FROM execution_plans
+                WHERE as_of_date = ?
+                ORDER BY timestamp ASC
+                """,
+                (as_of_date.isoformat(),),
+            ).fetchall()
+        return [self._from_json(ExecutionPlan, row["json"]) for row in rows]
 
     def get_run_summary_for_date(self, as_of_date: date) -> DailyRunSummary | None:
         with connect(self.database_path) as connection:
@@ -356,8 +558,13 @@ class TradingRepository:
 
     def dump_table_counts(self) -> dict[str, int]:
         tables = [
+            "regime_snapshots",
+            "candidate_assessments",
             "research_decisions",
+            "research_bundles",
             "risk_decisions",
+            "portfolio_fit_assessments",
+            "execution_plans",
             "order_intents",
             "orders",
             "fills",

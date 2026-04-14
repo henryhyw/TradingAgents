@@ -1,0 +1,81 @@
+symbol,style_tags,benchmark_symbol,peer_group
+SPY,core|broad_market|liquid,SPY,US Large Cap Core
+VOO,core|broad_market|low_cost,SPY,US Large Cap Core
+IVV,core|broad_market|low_cost,SPY,US Large Cap Core
+VTI,core|total_market|broad,SPY,US Broad Equity
+QQQ,growth|tech_tilt|momentum,QQQ,US Growth
+DIA,value|quality|large_cap,SPY,US Large Cap Value
+IWM,small_cap|cyclical|broad,IWM,US Small Cap
+XLK,sector|technology|cyclical,XLK,Technology
+XLF,sector|financials|cyclical,XLF,Financials
+XLV,sector|healthcare|defensive,XLV,Health Care
+XLI,sector|industrial|cyclical,XLI,Industrials
+XLY,sector|consumer_discretionary|cyclical,XLY,Consumer Discretionary
+XLP,sector|consumer_staples|defensive,XLP,Consumer Staples
+XLE,sector|energy|cyclical,XLE,Energy
+XLU,sector|utilities|defensive,XLU,Utilities
+XLB,sector|materials|cyclical,XLB,Materials
+XLRE,sector|real_estate|rate_sensitive,XLRE,Real Estate
+XLC,sector|communication_services|growth,XLC,Communication Services
+SMH,semiconductor|growth|high_beta,XLK,Semiconductors
+SOXX,semiconductor|growth|high_beta,XLK,Semiconductors
+AAPL,mega_cap|quality|growth,XLK,Mega Cap Tech
+MSFT,mega_cap|quality|growth,XLK,Mega Cap Tech
+NVDA,mega_cap|ai|high_beta,XLK,Mega Cap Tech
+AMZN,mega_cap|consumer_platform|growth,XLY,Mega Cap Growth
+GOOGL,mega_cap|platform|growth,XLC,Mega Cap Growth
+META,mega_cap|platform|growth,XLC,Mega Cap Growth
+BRK-B,mega_cap|value|quality,XLF,Mega Cap Financials
+JPM,large_cap|bank|value,XLF,Money Center Banks
+BAC,large_cap|bank|value,XLF,Money Center Banks
+GS,large_cap|investment_bank|cyclical,XLF,Capital Markets
+MS,large_cap|wealth|capital_markets,XLF,Capital Markets
+V,quality|payments|compounder,XLF,Payment Networks
+MA,quality|payments|compounder,XLF,Payment Networks
+UNH,quality|defensive|healthcare,XLV,Managed Care
+LLY,growth|healthcare|quality,XLV,Pharma/Biotech
+JNJ,defensive|healthcare|dividend,XLV,Pharma/Biotech
+ABBV,defensive|healthcare|dividend,XLV,Pharma/Biotech
+MRK,defensive|healthcare|quality,XLV,Pharma/Biotech
+WMT,defensive|staples|quality,XLP,Consumer Staples Leaders
+COST,defensive|staples|quality,XLP,Consumer Staples Leaders
+PG,defensive|staples|dividend,XLP,Consumer Staples Leaders
+KO,defensive|staples|dividend,XLP,Consumer Staples Leaders
+PEP,defensive|staples|dividend,XLP,Consumer Staples Leaders
+MCD,consumer|quality|defensive,XLY,Consumer Leaders
+HD,consumer|housing|cyclical,XLY,Consumer Leaders
+LOW,consumer|housing|cyclical,XLY,Consumer Leaders
+NKE,consumer|brand|cyclical,XLY,Consumer Leaders
+SBUX,consumer|brand|cyclical,XLY,Consumer Leaders
+DIS,media|communication|cyclical,XLC,Media & Telecom
+NFLX,media|communication|growth,XLC,Media & Telecom
+TMUS,telecom|communication|defensive,XLC,Media & Telecom
+VZ,telecom|communication|defensive,XLC,Media & Telecom
+CSCO,technology|value|quality,XLK,Large Cap Tech
+ORCL,technology|enterprise|quality,XLK,Large Cap Tech
+CRM,technology|software|growth,XLK,Large Cap Tech
+ADBE,technology|software|growth,XLK,Large Cap Tech
+AMD,semiconductor|growth|high_beta,XLK,Semiconductors
+QCOM,semiconductor|quality|value,XLK,Semiconductors
+TXN,semiconductor|quality|value,XLK,Semiconductors
+MU,semiconductor|cyclical|high_beta,XLK,Semiconductors
+AMAT,semiconductor|equipment|cyclical,XLK,Semiconductor Equipment
+LRCX,semiconductor|equipment|cyclical,XLK,Semiconductor Equipment
+KLAC,semiconductor|equipment|cyclical,XLK,Semiconductor Equipment
+XOM,energy|integrated|cashflow,XLE,Integrated Energy
+CVX,energy|integrated|cashflow,XLE,Integrated Energy
+COP,energy|upstream|cyclical,XLE,Exploration & Production
+SLB,energy|services|cyclical,XLE,Energy Services
+EOG,energy|upstream|cyclical,XLE,Exploration & Production
+NEE,utilities|defensive|quality,XLU,Utilities
+DUK,utilities|defensive|dividend,XLU,Utilities
+SO,utilities|defensive|dividend,XLU,Utilities
+PLD,real_estate|logistics|rate_sensitive,XLRE,REITs
+AMT,real_estate|infrastructure|rate_sensitive,XLRE,REITs
+EQIX,real_estate|datacenter|quality,XLRE,REITs
+GE,industrial|aerospace|cyclical,XLI,Industrials
+CAT,industrial|machinery|cyclical,XLI,Industrials
+RTX,industrial|defense|quality,XLI,Aerospace & Defense
+LMT,industrial|defense|quality,XLI,Aerospace & Defense
+UPS,industrial|logistics|cyclical,XLI,Transportation & Logistics
+FDX,industrial|logistics|cyclical,XLI,Transportation & Logistics

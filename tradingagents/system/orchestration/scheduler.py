@@ -38,7 +38,7 @@ class DailyScheduler:
                         shortlist_size=shortlist_size,
                         execute=execute,
                     )
-                except RuntimeError as exc:
+                except Exception as exc:
                     # Scheduler should stay alive even if one run fails.
                     logger.error("Scheduled run failed for %s: %s", today, exc)
                 self._last_run_date = today

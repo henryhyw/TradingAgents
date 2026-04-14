@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from tradingagents.system.config import load_settings
-from tradingagents.system.research import DeterministicResearchAdapter
+from tradingagents.system.research import DeterministicResearchAdapter, TradingAgentsResearchAdapter
 from tradingagents.system.research.parser import extract_json_object, normalize_rating, rating_to_action
 from tradingagents.system.schemas import TradeAction
 
@@ -33,3 +33,19 @@ def test_deterministic_adapter_generates_buy_signal_on_positive_trend(monkeypatc
     decision = adapter.research("AAPL", as_of)
     assert decision.action == TradeAction.BUY
     assert decision.desired_position_fraction and decision.desired_position_fraction > 0
+
+
+def test_tradingagents_adapter_returns_safe_hold_on_upstream_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    settings = load_settings()
+    adapter = TradingAgentsResearchAdapter(settings)
+
+    class BrokenGraph:
+        def propagate(self, symbol: str, as_of: str):
+            raise RuntimeError("quota exceeded")
+
+    adapter._graph = BrokenGraph()  # type: ignore[assignment]
+    decision = adapter.research("AAPL", date(2026, 4, 13))
+    assert decision.action == TradeAction.HOLD
+    assert "upstream_graph_failure" in decision.risk_flags

@@ -6,6 +6,29 @@ from pathlib import Path
 
 SCHEMA_STATEMENTS = [
     """
+    CREATE TABLE IF NOT EXISTS regime_snapshots (
+        regime_snapshot_id TEXT PRIMARY KEY,
+        as_of_date TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        label TEXT NOT NULL,
+        risk_budget_multiplier REAL NOT NULL,
+        max_gross_exposure_fraction REAL NOT NULL,
+        json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS candidate_assessments (
+        candidate_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        eligible INTEGER NOT NULL,
+        watchlist_only INTEGER NOT NULL,
+        ranking_score REAL NOT NULL,
+        timestamp TEXT NOT NULL,
+        json TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS research_decisions (
         decision_id TEXT PRIMARY KEY,
         symbol TEXT NOT NULL,
@@ -14,6 +37,16 @@ SCHEMA_STATEMENTS = [
         action TEXT NOT NULL,
         confidence REAL NOT NULL,
         thesis TEXT NOT NULL,
+        json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS research_bundles (
+        bundle_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        final_decision_id TEXT NOT NULL,
         json TEXT NOT NULL
     )
     """,
@@ -27,6 +60,30 @@ SCHEMA_STATEMENTS = [
         approved INTEGER NOT NULL,
         approved_size_fraction REAL NOT NULL,
         rejection_reason TEXT,
+        json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_fit_assessments (
+        fit_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        fits_portfolio INTEGER NOT NULL,
+        recommended_action TEXT NOT NULL,
+        target_weight REAL NOT NULL,
+        timestamp TEXT NOT NULL,
+        json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS execution_plans (
+        plan_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        intent_type TEXT NOT NULL,
+        side TEXT,
+        target_weight REAL NOT NULL,
+        timestamp TEXT NOT NULL,
         json TEXT NOT NULL
     )
     """,
