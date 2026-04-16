@@ -55,6 +55,9 @@ class RiskEngine:
         if decision.action == TradeAction.HOLD:
             reasons.append("hold_signal_no_order")
 
+        if decision.action == TradeAction.AVOID:
+            reasons.append("avoid_signal_no_entry")
+
         if decision.action == TradeAction.SELL and (current_position is None or current_position.quantity <= 0):
             reasons.append("no_long_position_to_exit")
 

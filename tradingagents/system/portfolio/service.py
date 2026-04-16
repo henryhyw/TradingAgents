@@ -61,14 +61,24 @@ class PortfolioService:
 
         if not risk_decision.approved:
             conflicts.append(risk_decision.rejection_reason or "risk_rejected")
+            recommended_action = (
+                OrderIntentType.AVOID
+                if decision.action == TradeAction.AVOID
+                else OrderIntentType.HOLD
+            )
+            rationale = (
+                "Risk committee rejected no-entry signal."
+                if decision.action == TradeAction.AVOID
+                else "Risk committee rejected this idea."
+            )
             return PortfolioFitAssessment(
                 symbol=decision.symbol,
                 as_of_date=risk_decision.as_of_date,
                 fits_portfolio=False,
-                recommended_action=OrderIntentType.HOLD,
+                recommended_action=recommended_action,
                 current_weight=current_weight,
                 target_weight=current_weight,
-                rationale="Risk committee rejected this idea.",
+                rationale=rationale,
                 conflicts=conflicts,
                 warnings=warnings,
             )
@@ -91,6 +101,18 @@ class PortfolioService:
             target_weight = 0.0
             recommended_action = OrderIntentType.EXIT
             rationale = "Exit aligns with risk-approved inventory reduction."
+        elif decision.action == TradeAction.AVOID:
+            if current_position is None or current_position.quantity <= 0:
+                fits = False
+                recommended_action = OrderIntentType.AVOID
+                target_weight = current_weight
+                rationale = "No-entry recommendation for long-only portfolio."
+            else:
+                fits = False
+                recommended_action = OrderIntentType.HOLD
+                target_weight = current_weight
+                rationale = "No-entry signal received while position exists; keeping current long unchanged."
+                warnings.append("avoid_signal_with_existing_inventory")
         elif decision.action == TradeAction.BUY:
             target_weight = max(current_weight, risk_decision.approved_size_fraction)
             buffer = 0.0015
@@ -148,7 +170,7 @@ class PortfolioService:
             return ExecutionPlan(
                 symbol=fit.symbol,
                 as_of_date=fit.as_of_date,
-                intent_type=OrderIntentType.HOLD,
+                intent_type=fit.recommended_action,
                 side=None,
                 target_weight=fit.target_weight,
                 quantity=None,

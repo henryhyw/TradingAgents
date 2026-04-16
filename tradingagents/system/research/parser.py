@@ -7,7 +7,7 @@ from typing import Any
 from tradingagents.system.schemas import TradeAction
 
 
-RATING_PATTERN = re.compile(r"\b(BUY|OVERWEIGHT|HOLD|UNDERWEIGHT|SELL)\b", re.IGNORECASE)
+RATING_PATTERN = re.compile(r"\b(BUY|OVERWEIGHT|HOLD|UNDERWEIGHT|SELL|AVOID|NO_ENTRY)\b", re.IGNORECASE)
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -39,6 +39,8 @@ def rating_to_action(rating: str) -> TradeAction:
         return TradeAction.BUY
     if normalized in {"SELL", "UNDERWEIGHT"}:
         return TradeAction.SELL
+    if normalized in {"AVOID", "NO_ENTRY"}:
+        return TradeAction.AVOID
     return TradeAction.HOLD
 
 
@@ -49,4 +51,6 @@ def rating_to_confidence(rating: str) -> float:
         "OVERWEIGHT": 0.58,
         "UNDERWEIGHT": 0.58,
         "HOLD": 0.42,
+        "AVOID": 0.30,
+        "NO_ENTRY": 0.30,
     }.get(rating.upper(), 0.42)

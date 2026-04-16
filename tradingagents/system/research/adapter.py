@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import date
+from typing import Any
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.system.config import SystemSettings
@@ -22,21 +24,25 @@ class ResearchAdapter(ABC):
 
 
 class TradingAgentsResearchAdapter(ResearchAdapter):
+    _RETRYABLE_ERROR_TYPES = {"ResourceExhausted", "ServiceUnavailable", "DeadlineExceeded", "TimeoutError"}
+    _NARROW_ANALYSTS = ("market", "fundamentals")
+
     def __init__(self, settings: SystemSettings):
         self.settings = settings
-        self._graph: TradingAgentsGraph | None = None
+        self._graphs: dict[tuple[str, ...], TradingAgentsGraph] = {}
 
-    def _ensure_graph(self) -> TradingAgentsGraph:
-        if self._graph is None:
+    def _ensure_graph(self, selected_analysts: list[str] | tuple[str, ...] | None = None) -> TradingAgentsGraph:
+        graph_key = tuple(selected_analysts or self.settings.run.research_analysts)
+        if graph_key not in self._graphs:
             if not self.settings.llm_ready():
                 _, detail = self.settings.llm_readiness()
                 raise RuntimeError(f"Live TradingAgents research credentials are not ready: {detail}")
-            self._graph = TradingAgentsGraph(
-                selected_analysts=self.settings.run.research_analysts,
+            self._graphs[graph_key] = TradingAgentsGraph(
+                selected_analysts=list(graph_key),
                 debug=False,
                 config=self.settings.as_tradingagents_config(),
             )
-        return self._graph
+        return self._graphs[graph_key]
 
     def _artifact_path(self, symbol: str, as_of_date: date) -> str:
         return str(
@@ -53,6 +59,8 @@ class TradingAgentsResearchAdapter(ResearchAdapter):
         rating: str,
         final_state: dict,
         artifact_path: str,
+        upstream_retry_count: int,
+        upstream_failure_counts: dict[str, int],
     ) -> ResearchDecision:
         graph = self._ensure_graph()
         raw_text = final_state["final_trade_decision"]
@@ -61,18 +69,19 @@ class TradingAgentsResearchAdapter(ResearchAdapter):
 Return JSON only.
 
 Convert the following multi-agent trading research into a strict object with these keys:
-- action: one of buy, sell, hold
+- action: one of buy, sell, hold, avoid
 - confidence: float between 0 and 1
 - thesis: concise but specific paragraph
 - risk_flags: list of short strings
 - invalidation_conditions: list of short strings
 - time_horizon: short phrase
-- desired_position_fraction: float between 0 and 0.05, or 0 for hold/sell
+- desired_position_fraction: float between 0 and 0.05, or 0 for hold/sell/avoid
 
 Rules:
 - Map BUY and OVERWEIGHT to buy.
 - Map SELL and UNDERWEIGHT to sell.
 - Map HOLD to hold.
+- Map explicit no-entry language to avoid.
 - Keep desired_position_fraction at or below 0.05.
 - Use the supplied rating unless the supporting text clearly contradicts it.
 
@@ -112,7 +121,13 @@ Final trade decision:
                 upstream_rating=rating,
                 upstream_artifact_path=artifact_path,
                 notes=[],
-                extra={"investment_plan_excerpt": investment_plan[:1000], "decision_excerpt": raw_text[:1000]},
+                extra={
+                    "investment_plan_excerpt": investment_plan[:1000],
+                    "decision_excerpt": raw_text[:1000],
+                    "upstream_retry_count": upstream_retry_count,
+                    "upstream_failure_counts": upstream_failure_counts,
+                    "upstream_fallback_mode": "none",
+                },
             ),
         )
 
@@ -123,6 +138,8 @@ Final trade decision:
         rating: str,
         final_state: dict,
         artifact_path: str,
+        upstream_retry_count: int,
+        upstream_failure_counts: dict[str, int],
     ) -> ResearchDecision:
         raw_text = final_state["final_trade_decision"]
         action = rating_to_action(rating)
@@ -154,18 +171,31 @@ Final trade decision:
                 upstream_rating=rating,
                 upstream_artifact_path=artifact_path,
                 notes=["Structured parser fallback applied."],
-                extra={"decision_excerpt": raw_text[:1000]},
+                extra={
+                    "decision_excerpt": raw_text[:1000],
+                    "upstream_retry_count": upstream_retry_count,
+                    "upstream_failure_counts": upstream_failure_counts,
+                    "upstream_fallback_mode": "parser",
+                },
             ),
         )
 
-    def _research_error_fallback(self, symbol: str, as_of_date: date, exc: Exception) -> ResearchDecision:
+    def _research_error_fallback(
+        self,
+        symbol: str,
+        as_of_date: date,
+        exc: Exception,
+        upstream_retry_count: int,
+        upstream_failure_counts: dict[str, int],
+    ) -> ResearchDecision:
+        error_type = type(exc).__name__
         return ResearchDecision(
             symbol=symbol,
             as_of_date=as_of_date,
-            action=TradeAction.HOLD,
-            confidence=0.05,
+            action=TradeAction.AVOID,
+            confidence=0.12,
             thesis=f"Research adapter fallback: upstream graph failed with {type(exc).__name__}.",
-            risk_flags=[f"research_error:{type(exc).__name__}", "upstream_graph_failure"],
+            risk_flags=[f"research_error:{error_type}", "upstream_graph_failure", "insufficient_research_confidence"],
             invalidation_conditions=["Retry after API/data recovery."],
             time_horizon="N/A",
             desired_position_fraction=0.0,
@@ -173,28 +203,103 @@ Final trade decision:
                 research_adapter="tradingagents_graph",
                 llm_provider=self.settings.llm.provider,
                 llm_model=self.settings.llm.quick_model,
-                parser_mode="research_error_fallback",
-                upstream_rating="HOLD",
+                parser_mode="upstream_error_no_entry",
+                upstream_rating="AVOID",
                 upstream_artifact_path=None,
                 notes=[str(exc)[:300]],
-                extra={},
+                extra={
+                    "upstream_retry_count": upstream_retry_count,
+                    "upstream_failure_counts": upstream_failure_counts,
+                    "upstream_failure_type": error_type,
+                    "upstream_fallback_mode": "research_error_no_entry",
+                },
             ),
         )
 
+    def _propagate_with_retries(
+        self,
+        symbol: str,
+        as_of_date: date,
+    ) -> tuple[dict[str, Any] | None, str | None, int, dict[str, int], Exception | None]:
+        retry_count = 0
+        failure_counts: dict[str, int] = {}
+        backoff = max(0.1, self.settings.data.history_retry_backoff_seconds)
+        max_attempts = max(1, self.settings.llm.max_retries + 1)
+
+        default_analysts = tuple(self.settings.run.research_analysts)
+        narrowed_attempt_used = False
+        graph = self._ensure_graph(default_analysts)
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                final_state, rating = graph.propagate(symbol, as_of_date.isoformat())
+                return final_state, rating, retry_count, failure_counts, None
+            except Exception as exc:  # pragma: no cover - exercised via adapter tests with stubs
+                error_type = type(exc).__name__
+                failure_counts[error_type] = failure_counts.get(error_type, 0) + 1
+                should_retry = False
+
+                if error_type in self._RETRYABLE_ERROR_TYPES and attempt < max_attempts:
+                    should_retry = True
+                elif error_type == "InvalidArgument" and not narrowed_attempt_used:
+                    narrowed_attempt_used = True
+                    graph = self._ensure_graph(self._NARROW_ANALYSTS)
+                    should_retry = True
+                elif error_type == "InvalidArgument" and attempt < max_attempts:
+                    should_retry = True
+
+                if not should_retry:
+                    return None, None, retry_count, failure_counts, exc
+
+                retry_count += 1
+                sleep_seconds = min(2.5, backoff * retry_count)
+                logger.warning(
+                    "Upstream research retry %s for %s on %s after %s (%s).",
+                    retry_count,
+                    symbol,
+                    as_of_date,
+                    error_type,
+                    "narrowed_analysts" if narrowed_attempt_used else "same_scope",
+                )
+                time.sleep(sleep_seconds)
+
+        return None, None, retry_count, failure_counts, RuntimeError("upstream_retry_exhausted")
+
     def research(self, symbol: str, as_of_date: date) -> ResearchDecision:
-        try:
-            graph = self._ensure_graph()
-            final_state, rating = graph.propagate(symbol, as_of_date.isoformat())
-        except Exception as exc:
-            logger.error("Upstream research failed for %s on %s: %s", symbol, as_of_date, exc)
-            return self._research_error_fallback(symbol, as_of_date, exc)
+        final_state, rating, retry_count, failure_counts, upstream_error = self._propagate_with_retries(symbol, as_of_date)
+        if upstream_error is not None or final_state is None or rating is None:
+            logger.error("Upstream research failed for %s on %s: %s", symbol, as_of_date, upstream_error)
+            return self._research_error_fallback(
+                symbol=symbol,
+                as_of_date=as_of_date,
+                exc=upstream_error or RuntimeError("unknown_upstream_error"),
+                upstream_retry_count=retry_count,
+                upstream_failure_counts=failure_counts,
+            )
         normalized_rating = normalize_rating(str(rating))
         artifact_path = self._artifact_path(symbol, as_of_date)
         try:
-            return self._llm_parse(symbol, as_of_date, normalized_rating, final_state, artifact_path)
+            return self._llm_parse(
+                symbol,
+                as_of_date,
+                normalized_rating,
+                final_state,
+                artifact_path,
+                retry_count,
+                failure_counts,
+            )
         except Exception as exc:  # pragma: no cover - fallback is safety path
             logger.warning("Structured parser fallback for %s on %s: %s", symbol, as_of_date, exc)
-            return self._fallback(symbol, as_of_date, normalized_rating, final_state, artifact_path)
+            return self._fallback(
+                symbol,
+                as_of_date,
+                normalized_rating,
+                final_state,
+                artifact_path,
+                retry_count,
+                failure_counts,
+            )
 
 
 class DeterministicResearchAdapter(ResearchAdapter):

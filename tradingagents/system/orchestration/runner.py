@@ -290,6 +290,45 @@ class TradingSystemRunner:
         completeness = 1.0 if not shortlist else len(valid_assets) / len(shortlist)
         return valid_assets, skipped, completeness
 
+    @staticmethod
+    def _increment_counter(counter: dict[str, int], key: str, amount: int = 1) -> None:
+        counter[key] = counter.get(key, 0) + amount
+
+    @staticmethod
+    def _extract_reason_tokens(reason_text: str | None) -> list[str]:
+        if reason_text is None:
+            return []
+        return [token.strip() for token in reason_text.split(";") if token.strip()]
+
+    @staticmethod
+    def _block_category_from_reason(reason: str) -> str:
+        lowered = reason.lower()
+        if "upstream" in lowered or "research_error" in lowered:
+            return "upstream_fallback"
+        if "no_long_position_to_exit" in lowered or "no_inventory_to_reduce" in lowered:
+            return "no_long_to_exit"
+        if "missing" in lowered or "history" in lowered or "data" in lowered:
+            return "data_quality"
+        if any(
+            token in lowered
+            for token in (
+                "limit",
+                "liquidity",
+                "price_below",
+                "cooldown",
+                "watchlist",
+                "correlation",
+                "sector",
+                "loss",
+                "capacity",
+                "blackout",
+            )
+        ):
+            return "risk_limits"
+        if "avoid" in lowered or "no_entry" in lowered:
+            return "no_entry"
+        return "other"
+
     def run_once(
         self,
         as_of_date: date | None = None,
@@ -347,9 +386,15 @@ class TradingSystemRunner:
         orders: list[OrderRecord] = []
         fills = []
         rejected_symbols: dict[str, str] = {}
+        action_counts: dict[str, int] = {}
+        block_reason_counts: dict[str, int] = {}
+        upstream_retry_count = 0
+        upstream_failure_counts: dict[str, int] = {}
 
         shortlist, skipped_symbols, shortlist_data_coverage = self._validate_shortlist_data(shortlist, run_date)
         rejected_symbols.update(skipped_symbols)
+        for reason in skipped_symbols.values():
+            self._increment_counter(block_reason_counts, self._block_category_from_reason(reason))
         warnings.append(f"shortlist_data_coverage={shortlist_data_coverage:.2f}")
         if (
             self.live_llm_mode
@@ -368,12 +413,27 @@ class TradingSystemRunner:
         for asset in shortlist:
             logger.info("Researching %s", asset.symbol)
             candidate = candidate_by_symbol.get(asset.symbol) or self._candidate_from_asset(asset, run_date)
-            decision, bundle = self.research_org.run(asset.symbol, run_date, candidate, regime)
-            self.repository.save_research_decision(decision)
-            research_decisions.append(decision)
-
             current_portfolio = self.broker.get_portfolio_snapshot(run_date)
             current_position = self._symbol_position(current_portfolio, asset.symbol)
+            decision, bundle = self.research_org.run(
+                asset.symbol,
+                run_date,
+                candidate,
+                regime,
+                current_position=current_position,
+            )
+            self.repository.save_research_decision(decision)
+            research_decisions.append(decision)
+            self._increment_counter(action_counts, decision.action.value)
+            source_extra = decision.source_metadata.extra
+            upstream_retry_count += int(source_extra.get("upstream_retry_count", 0))
+            raw_failure_counts = source_extra.get("upstream_failure_counts", {})
+            if isinstance(raw_failure_counts, dict):
+                for error_type, count in raw_failure_counts.items():
+                    self._increment_counter(upstream_failure_counts, str(error_type), int(count))
+            if source_extra.get("upstream_fallback_mode") == "research_error_no_entry":
+                self._increment_counter(block_reason_counts, "upstream_fallback")
+
             market_bar = self.provider.get_latest_bar(asset.symbol, run_date)
             earnings_event = self.provider.get_earnings_event(asset.symbol, run_date)
             sector_exposure_fraction = self._sector_exposure_fraction(
@@ -440,9 +500,18 @@ class TradingSystemRunner:
             order_intent = self.portfolio_service.build_order_intent_from_plan(plan, decision, risk_decision)
             if order_intent is None:
                 if not risk_decision.approved:
-                    rejected_symbols[asset.symbol] = risk_decision.rejection_reason or "risk_rejected"
-                elif fit.recommended_action == OrderIntentType.HOLD:
-                    rejected_symbols.setdefault(asset.symbol, "portfolio_hold")
+                    reason = risk_decision.rejection_reason or "risk_rejected"
+                    rejected_symbols[asset.symbol] = reason
+                    for token in self._extract_reason_tokens(reason):
+                        self._increment_counter(block_reason_counts, self._block_category_from_reason(token))
+                else:
+                    no_order_reason = (
+                        "portfolio_avoid_no_entry"
+                        if fit.recommended_action == OrderIntentType.AVOID
+                        else "portfolio_hold"
+                    )
+                    rejected_symbols.setdefault(asset.symbol, no_order_reason)
+                    self._increment_counter(block_reason_counts, self._block_category_from_reason(no_order_reason))
                 continue
 
             intent_status = OrderStatus.PENDING if not execute else OrderStatus.NEW
@@ -457,7 +526,17 @@ class TradingSystemRunner:
                     rejected_symbols[asset.symbol] = "; ".join(order.notes)
             else:
                 rejected_symbols.setdefault(asset.symbol, "dry_run_not_executed")
+                self._increment_counter(block_reason_counts, "dry_run")
 
+        non_entry_bearish_count = action_counts.get("avoid", 0) + action_counts.get("sell", 0)
+        flat_book_start = all(position.quantity <= 0 for position in baseline_portfolio.positions)
+        flat_book_suppressed = (
+            flat_book_start
+            and action_counts.get("buy", 0) == 0
+            and len(research_decisions) > 0
+            and non_entry_bearish_count >= max(1, len(research_decisions) - 1)
+            and len(orders) == 0
+        )
         final_portfolio = self.broker.get_portfolio_snapshot(run_date)
         summary = DailyRunSummary(
             mode=mode,
@@ -475,6 +554,11 @@ class TradingSystemRunner:
             rejected_symbols=rejected_symbols,
             orders_submitted=len(orders),
             fills_completed=len(fills),
+            research_action_counts=action_counts,
+            block_reason_counts=block_reason_counts,
+            upstream_retry_count=upstream_retry_count,
+            upstream_failure_counts=upstream_failure_counts,
+            flat_book_suppressed=flat_book_suppressed,
             notes=[],
             warnings=warnings,
         )

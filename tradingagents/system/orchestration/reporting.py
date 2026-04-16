@@ -127,11 +127,17 @@ def generate_daily_report(
             f"- {decision.symbol}: {decision.action.value.upper()} ({decision.confidence:.2f}) horizon={decision.time_horizon}"
         )
         lines.append(f"  Thesis: {decision.thesis}")
+        if decision.source_metadata.parser_mode == "upstream_error_no_entry":
+            lines.append("  Fallback: upstream failure triggered insufficient-research no-entry state.")
         if bundle is not None:
             lines.append(
                 f"  Debate: winner={bundle.debate_summary.winning_side}, "
-                f"balance={bundle.debate_summary.confidence_balance:.2f}"
+                f"balance={bundle.debate_summary.confidence_balance:.2f}, "
+                f"final_action={bundle.debate_summary.final_action.value}, "
+                f"aligned={bundle.debate_summary.aligned_with_final_action}"
             )
+            if bundle.debate_summary.override_reason:
+                lines.append(f"  Override: {bundle.debate_summary.override_reason}")
             lines.append(f"  Bull: {bundle.bull_case.summary}")
             lines.append(f"  Bear: {bundle.bear_case.summary}")
 
@@ -211,6 +217,30 @@ def generate_daily_report(
         lines.append("- No material data-quality warnings recorded.")
     for warning in warnings[:20]:
         lines.append(f"- {warning}")
+
+    _section(lines, "Diagnostics")
+    if summary is None:
+        lines.append("- Run summary unavailable; diagnostics omitted.")
+    else:
+        action_counts = summary.research_action_counts or {}
+        if action_counts:
+            lines.append(
+                "- Research actions: "
+                + ", ".join(f"{action.upper()}={count}" for action, count in sorted(action_counts.items()))
+            )
+        block_counts = summary.block_reason_counts or {}
+        if block_counts:
+            lines.append(
+                "- Block reasons: "
+                + ", ".join(f"{reason}={count}" for reason, count in sorted(block_counts.items()))
+            )
+        if summary.upstream_failure_counts:
+            lines.append(
+                "- Upstream failures: "
+                + ", ".join(f"{error_type}={count}" for error_type, count in sorted(summary.upstream_failure_counts.items()))
+            )
+        lines.append(f"- Upstream retries: {summary.upstream_retry_count}")
+        lines.append(f"- Flat-book suppressed: {summary.flat_book_suppressed}")
 
     report_path = report_dir / "summary.md"
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

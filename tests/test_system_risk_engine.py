@@ -101,6 +101,25 @@ def test_risk_engine_rejects_sell_when_no_existing_long(monkeypatch, tmp_path):
     assert "no_long_position_to_exit" in (result.rejection_reason or "")
 
 
+def test_risk_engine_treats_avoid_as_explicit_no_entry(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    engine = RiskEngine(settings)
+    result = engine.evaluate(
+        decision=_decision(TradeAction.AVOID),
+        portfolio=_portfolio(),
+        current_position=None,
+        market_bar=_bar(),
+        avg_dollar_volume_20d=50_000_000,
+        earnings_event=EarningsEvent(symbol="AAPL", earnings_date=None, reliable=False),
+        daily_pnl_fraction=0.0,
+        opening_trades_today=0,
+        losing_exits_today=0,
+        as_of_date=date(2026, 4, 13),
+    )
+    assert not result.approved
+    assert "avoid_signal_no_entry" in (result.rejection_reason or "")
+
+
 def test_risk_engine_caps_position_size_by_config(monkeypatch, tmp_path):
     settings = _settings(monkeypatch, tmp_path)
     engine = RiskEngine(settings)

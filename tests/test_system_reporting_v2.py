@@ -87,6 +87,8 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
             as_of_date=as_of,
             adjudication="Bull wins",
             winning_side="bull",
+            final_action=TradeAction.BUY,
+            aligned_with_final_action=True,
         ),
         trader_note="Buy",
         final_decision_id=decision.decision_id,
@@ -109,6 +111,11 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         universe_size=100,
         eligible_universe_size=80,
         shortlisted_symbols=["AAPL"],
+        research_action_counts={"buy": 1, "avoid": 0},
+        block_reason_counts={"risk_limits": 0},
+        upstream_retry_count=1,
+        upstream_failure_counts={"ResourceExhausted": 1},
+        flat_book_suppressed=False,
     )
     shortlist = [
         ScreenedAsset(
@@ -147,4 +154,6 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "## Regime Summary" in content
     assert "## Research & Debate" in content
     assert "## Risk Committee" in content
+    assert "## Diagnostics" in content
+    assert "final_action=buy" in content.lower()
     assert (tmp_path / as_of.isoformat() / "summary.json").exists()

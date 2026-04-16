@@ -12,6 +12,7 @@ from tradingagents.system.schemas import (
     BullCaseMemo,
     CandidateAssessment,
     DebateSummary,
+    PositionSnapshot,
     RegimeSnapshot,
     ResearchBundle,
     ResearchDecision,
@@ -310,6 +311,117 @@ class ResearchOrganization:
         )
         return regime_memo, macro_memo
 
+    @staticmethod
+    def _has_inventory(current_position: PositionSnapshot | None) -> bool:
+        return current_position is not None and current_position.quantity > 0
+
+    def _entry_gate_satisfied(
+        self,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+    ) -> tuple[bool, str]:
+        if candidate is not None and candidate.watchlist_only:
+            return False, "watchlist_only_candidate"
+        if candidate is not None and not candidate.eligible:
+            return False, "candidate_not_eligible"
+        if candidate is not None and candidate.avg_dollar_volume_20d < self.settings.data.min_avg_dollar_volume:
+            return False, "liquidity_below_minimum"
+        if regime is not None and regime.label.value not in {"risk_on", "balanced"}:
+            return False, f"regime_{regime.label.value}_not_entry_favorable"
+        if technical_memo.signal != "bullish":
+            return False, "technical_signal_not_bullish"
+        if technical_memo.confidence < 0.55:
+            return False, "technical_confidence_too_low"
+        if candidate is not None and candidate.relative_strength_20d <= 0:
+            return False, "relative_strength_not_positive"
+        if candidate is not None and candidate.return_20d <= 0:
+            return False, "short_term_return_not_positive"
+        return True, "entry_gate_passed"
+
+    def _preferred_action_from_debate(self, winning_side: str, has_inventory: bool) -> TradeAction:
+        if winning_side == "bull":
+            return TradeAction.BUY
+        if winning_side == "bear":
+            return TradeAction.SELL if has_inventory else TradeAction.AVOID
+        return TradeAction.HOLD if has_inventory else TradeAction.AVOID
+
+    def _adjudicate_long_only_action(
+        self,
+        decision: ResearchDecision,
+        debate: DebateSummary,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+        current_position: PositionSnapshot | None,
+    ) -> tuple[ResearchDecision, DebateSummary]:
+        has_inventory = self._has_inventory(current_position)
+        original_action = decision.action
+        final_action = decision.action
+        override_reason: str | None = None
+
+        if final_action == TradeAction.SELL and not has_inventory:
+            final_action = TradeAction.AVOID
+            override_reason = "sell_recast_to_avoid_no_inventory"
+
+        if debate.winning_side == "bear" and not has_inventory and final_action == TradeAction.SELL:
+            final_action = TradeAction.AVOID
+            override_reason = override_reason or "debate_bear_flat_book_maps_to_avoid"
+
+        if debate.winning_side == "bull" and final_action in {TradeAction.SELL, TradeAction.HOLD, TradeAction.AVOID}:
+            entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo)
+            if entry_ok:
+                final_action = TradeAction.BUY
+                override_reason = f"debate_bull_entry_gate_passed:{entry_reason}"
+            else:
+                override_reason = override_reason or f"debate_bull_override_rejected:{entry_reason}"
+
+        preferred_action = self._preferred_action_from_debate(debate.winning_side, has_inventory)
+        aligned = final_action == preferred_action
+        if not aligned and override_reason is None:
+            override_reason = f"debate_{debate.winning_side}_preferred_{preferred_action.value}_but_final_{final_action.value}"
+
+        desired_position_fraction = decision.desired_position_fraction
+        if final_action != TradeAction.BUY:
+            desired_position_fraction = 0.0
+        elif desired_position_fraction is None or desired_position_fraction <= 0:
+            desired_position_fraction = min(0.04, self.settings.risk.max_position_size_fraction)
+
+        updated_risk_flags = list(
+            dict.fromkeys(
+                decision.risk_flags + ([f"action_override:{override_reason}"] if override_reason else [])
+            )
+        )
+        updated_decision = decision.model_copy(
+            update={
+                "action": final_action,
+                "desired_position_fraction": desired_position_fraction,
+                "risk_flags": updated_risk_flags,
+            }
+        )
+        updated_key_points = [point for point in debate.key_points if not point.startswith("final_action=")]
+        updated_key_points.append(f"final_action={final_action.value}")
+        if override_reason:
+            updated_key_points.append(f"override_reason={override_reason}")
+        updated_debate = debate.model_copy(
+            update={
+                "final_action": final_action,
+                "aligned_with_final_action": aligned,
+                "override_reason": override_reason,
+                "key_points": updated_key_points,
+            }
+        )
+        if original_action != final_action:
+            updated_decision = updated_decision.model_copy(
+                update={
+                    "thesis": (
+                        f"{updated_decision.thesis} Final adjudication adjusted action from "
+                        f"{original_action.value.upper()} to {final_action.value.upper()} for long-only semantics."
+                    )
+                }
+            )
+        return updated_decision, updated_debate
+
     def _bull_bear_and_debate(
         self,
         symbol: str,
@@ -369,6 +481,9 @@ class ResearchOrganization:
             adjudication=adjudication,
             winning_side=winning,
             confidence_balance=_clamp(abs(bull_conviction - bear_conviction) + 0.35, 0.35, 0.95),
+            final_action=decision.action,
+            aligned_with_final_action=True,
+            override_reason=None,
             falsifiers=[
                 "If trend and breadth diverge from the selected stance for 2 consecutive sessions.",
                 "If event/news flow contradicts the current dominant thesis.",
@@ -388,6 +503,7 @@ class ResearchOrganization:
         as_of_date: date,
         candidate: CandidateAssessment | None,
         regime: RegimeSnapshot | None,
+        current_position: PositionSnapshot | None = None,
     ) -> tuple[ResearchDecision, ResearchBundle]:
         decision = self.adapter.research(symbol, as_of_date)
         history = self.provider.get_history(symbol, as_of_date, self.settings.data.history_lookback_days)
@@ -414,6 +530,14 @@ class ResearchOrganization:
         news_memo, sentiment_memo = self._news_memos(symbol, as_of_date, news_items)
         memos = [universe_scout, regime_memo, macro_memo, technical_memo, fundamental_memo, news_memo, sentiment_memo]
         bull_case, bear_case, debate = self._bull_bear_and_debate(symbol, as_of_date, decision, memos)
+        decision, debate = self._adjudicate_long_only_action(
+            decision=decision,
+            debate=debate,
+            candidate=candidate,
+            regime=regime,
+            technical_memo=technical_memo,
+            current_position=current_position,
+        )
         memos.append(
             AnalystMemo(
                 symbol=symbol,
@@ -455,7 +579,11 @@ class ResearchOrganization:
                 symbol=symbol,
                 as_of_date=as_of_date,
                 role="Trader",
-                signal="bullish" if decision.action == TradeAction.BUY else ("bearish" if decision.action == TradeAction.SELL else "neutral"),
+                signal=(
+                    "bullish"
+                    if decision.action == TradeAction.BUY
+                    else ("bearish" if decision.action == TradeAction.SELL else "neutral")
+                ),
                 confidence=decision.confidence,
                 summary=decision.thesis[:600],
                 evidence=[f"upstream_action={decision.action.value}", f"time_horizon={decision.time_horizon}"],
@@ -472,7 +600,14 @@ class ResearchOrganization:
             bull_case=bull_case,
             bear_case=bear_case,
             debate_summary=debate,
-            trader_note=f"Trader recommendation: {decision.action.value.upper()} with confidence {decision.confidence:.2f}.",
+            trader_note=(
+                f"Trader recommendation: {decision.action.value.upper()} with confidence {decision.confidence:.2f}."
+                if debate.override_reason is None
+                else (
+                    f"Trader recommendation: {decision.action.value.upper()} with confidence {decision.confidence:.2f}; "
+                    f"override_reason={debate.override_reason}."
+                )
+            ),
             final_decision_id=decision.decision_id,
             warnings=[warning for memo in memos for warning in memo.warnings][:12],
         )

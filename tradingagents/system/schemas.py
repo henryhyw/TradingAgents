@@ -24,6 +24,7 @@ class TradeAction(str, Enum):
     BUY = "buy"
     SELL = "sell"
     HOLD = "hold"
+    AVOID = "avoid"
 
 
 class OrderSide(str, Enum):
@@ -70,6 +71,7 @@ class OrderIntentType(str, Enum):
     TRIM = "trim"
     EXIT = "exit"
     HOLD = "hold"
+    AVOID = "avoid"
 
 
 class SourceMetadata(StrictModel):
@@ -214,6 +216,9 @@ class DebateSummary(StrictModel):
     adjudication: str
     winning_side: Literal["bull", "bear", "draw"]
     confidence_balance: float = 0.5
+    final_action: TradeAction = TradeAction.HOLD
+    aligned_with_final_action: bool = True
+    override_reason: str | None = None
     falsifiers: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
 
@@ -438,6 +443,11 @@ class DailyRunSummary(StrictModel):
     rejected_symbols: dict[str, str] = Field(default_factory=dict)
     orders_submitted: int = 0
     fills_completed: int = 0
+    research_action_counts: dict[str, int] = Field(default_factory=dict)
+    block_reason_counts: dict[str, int] = Field(default_factory=dict)
+    upstream_retry_count: int = 0
+    upstream_failure_counts: dict[str, int] = Field(default_factory=dict)
+    flat_book_suppressed: bool = False
     report_path: str | None = None
     notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
