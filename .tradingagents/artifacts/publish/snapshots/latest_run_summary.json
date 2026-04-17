@@ -1,0 +1,33 @@
+{
+  "run_id": "run_b952d8c681af4df3",
+  "mode": "paper",
+  "as_of_date": "2026-04-15",
+  "started_at": "2026-04-16T19:37:06.974178Z",
+  "completed_at": "2026-04-16T19:37:45.335335Z",
+  "status": "completed",
+  "universe_size": 2,
+  "eligible_universe_size": 0,
+  "regime_label": "balanced",
+  "regime_risk_budget": 1.0,
+  "shortlisted_symbols": [],
+  "watchlist_symbols": [],
+  "approved_symbols": [],
+  "rejected_symbols": {
+    "SPY": "critical_history_missing_pre_screen",
+    "NVDA": "critical_history_missing_pre_screen"
+  },
+  "orders_submitted": 0,
+  "fills_completed": 0,
+  "research_action_counts": {},
+  "block_reason_counts": {
+    "data_quality": 2
+  },
+  "upstream_retry_count": 0,
+  "upstream_failure_counts": {},
+  "flat_book_suppressed": false,
+  "report_path": "/Users/henry/Codes/GitHub/TradingAgents/.tradingagents/reports/2026-04-15/summary.md",
+  "notes": [],
+  "warnings": [
+    "shortlist_data_coverage=0.00"
+  ]
+}

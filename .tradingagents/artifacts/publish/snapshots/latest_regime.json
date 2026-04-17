@@ -1,0 +1,44 @@
+{
+  "regime_snapshot_id": "rg_addd05ef297b437f",
+  "as_of_date": "2026-04-15",
+  "timestamp": "2026-04-16T19:37:38.929134Z",
+  "label": "balanced",
+  "volatility_regime": "normal",
+  "trend_regime": "mixed",
+  "risk_on_score": 0.0,
+  "risk_budget_multiplier": 1.0,
+  "max_gross_exposure_fraction": 0.3,
+  "signals": {
+    "spy_trend": 0.0,
+    "qqq_relative_strength_20d": 0.0,
+    "iwm_relative_strength_20d": 0.0,
+    "cyclical_vs_defensive_20d": 0.0,
+    "staples_vs_market_20d": 0.0,
+    "duration_return_20d": 0.0,
+    "dollar_return_20d": 0.0,
+    "vix_level": 20.0,
+    "vix_return_20d": 0.0,
+    "proxy_coverage_fraction": 0.0,
+    "critical_proxy_count": 0.0
+  },
+  "notes": [
+    "SPY trend score +0.00",
+    "VIX level 20.00",
+    "Risk-on composite +0.00",
+    "Proxy coverage 0.00 (0/15)"
+  ],
+  "warnings": [
+    "missing_proxy:IWM",
+    "missing_proxy:QQQ",
+    "missing_proxy:SPY",
+    "missing_proxy:TLT",
+    "missing_proxy:UUP",
+    "missing_proxy:XLK",
+    "missing_proxy:XLP",
+    "missing_proxy:XLU",
+    "missing_proxy:^VIX",
+    "regime_critical_proxies_below_threshold",
+    "regime_proxy_coverage_below_threshold"
+  ],
+  "data_quality": "failed"
+}
