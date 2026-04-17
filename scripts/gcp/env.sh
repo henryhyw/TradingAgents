@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v gcloud >/dev/null 2>&1; then
+  if [[ -x "${HOME}/google-cloud-sdk/bin/gcloud" ]]; then
+    export PATH="${HOME}/google-cloud-sdk/bin:${PATH}"
+  fi
+fi
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "gcloud CLI not found on PATH. Install Cloud SDK or export PATH before running scripts/gcp/*." >&2
+  exit 127
+fi
+
 PROJECT_ID="${PROJECT_ID:-ta-henry-2026}"
 REGION="${REGION:-us-central1}"
 ZONE="${ZONE:-us-central1-a}"
