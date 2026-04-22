@@ -14,7 +14,7 @@ mkdir -p \"${APP_HOME}/logs\"
 TMP_CRON=\$(mktemp)
 {
   echo \"CRON_TZ=America/New_York\"
-  crontab -l 2>/dev/null | grep -v \"vm_daily_run.sh\" || true
+  crontab -l 2>/dev/null | grep -v \"vm_daily_run.sh\" | grep -v \"^CRON_TZ=America/New_York\$\" || true
   echo \"${CRON_SCHEDULE_NY} ${RUN_SCRIPT} >> ${APP_HOME}/logs/cron.log 2>&1\"
 } > \"\${TMP_CRON}\"
 crontab \"\${TMP_CRON}\"

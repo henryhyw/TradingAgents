@@ -36,7 +36,7 @@ VENV_DIR="${VENV_DIR:-${VM_ROOT_DIR}/venv}"
 RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-${VM_ROOT_DIR}/runtime.env}"
 APP_HOME="${APP_HOME:-${VM_ROOT_DIR}/.tradingagents}"
 
-CRON_SCHEDULE_NY="${CRON_SCHEDULE_NY:-45 15 * * 1-5}"
+CRON_SCHEDULE_NY="${CRON_SCHEDULE_NY:-10 16 * * 1-5}"
 
 GCP_SSH_FLAGS=()
 if [[ "${GCP_USE_IAP}" == "true" ]]; then
