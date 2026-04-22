@@ -127,8 +127,17 @@ def generate_daily_report(
             f"- {decision.symbol}: {decision.action.value.upper()} ({decision.confidence:.2f}) horizon={decision.time_horizon}"
         )
         lines.append(f"  Thesis: {decision.thesis}")
-        if decision.source_metadata.parser_mode == "upstream_error_no_entry":
-            lines.append("  Fallback: upstream failure triggered insufficient-research no-entry state.")
+        source_extra = decision.source_metadata.extra
+        if decision.source_metadata.parser_mode == "upstream_error_no_entry" or source_extra.get("fallback_origin"):
+            lines.append("  Fallback: upstream failure/insufficient-research state (non-tradable no-entry).")
+        if source_extra.get("buy_promotion_applied"):
+            lines.append(f"  Promotion: BUY promoted via {source_extra.get('buy_promotion_source') or 'adjudication'}.")
+        if source_extra.get("buy_blocked_due_to_fallback"):
+            lines.append("  Promotion Block: BUY blocked because research originated from upstream fallback.")
+        if source_extra.get("buy_blocked_due_to_thesis_inconsistency"):
+            lines.append("  Promotion Block: BUY blocked due to bearish/no-entry thesis semantics.")
+        if source_extra.get("action_thesis_mismatch_detected"):
+            lines.append("  Consistency: action/thesis mismatch detected and corrected.")
         if bundle is not None:
             lines.append(
                 f"  Debate: winner={bundle.debate_summary.winning_side}, "
@@ -240,6 +249,19 @@ def generate_daily_report(
                 + ", ".join(f"{error_type}={count}" for error_type, count in sorted(summary.upstream_failure_counts.items()))
             )
         lines.append(f"- Upstream retries: {summary.upstream_retry_count}")
+        lines.append(
+            "- BUY promotion diagnostics: "
+            f"promoted={summary.promoted_buy_count}, "
+            f"promoted_from_debate={summary.promoted_buy_from_debate_count}, "
+            f"blocked_fallback={summary.blocked_buy_due_to_fallback_count}, "
+            f"blocked_thesis={summary.blocked_buy_due_to_thesis_inconsistency_count}"
+        )
+        lines.append(
+            "- Consistency diagnostics: "
+            f"action_thesis_mismatch={summary.action_thesis_mismatch_count}, "
+            f"fallback_origin_decisions={summary.fallback_origin_decision_count}, "
+            f"final_action_changed={summary.final_action_changed_count}"
+        )
         lines.append(f"- Flat-book suppressed: {summary.flat_book_suppressed}")
 
     report_path = report_dir / "summary.md"

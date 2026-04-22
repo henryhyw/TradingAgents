@@ -448,6 +448,13 @@ class DailyRunSummary(StrictModel):
     upstream_retry_count: int = 0
     upstream_failure_counts: dict[str, int] = Field(default_factory=dict)
     flat_book_suppressed: bool = False
+    promoted_buy_count: int = 0
+    promoted_buy_from_debate_count: int = 0
+    blocked_buy_due_to_fallback_count: int = 0
+    blocked_buy_due_to_thesis_inconsistency_count: int = 0
+    action_thesis_mismatch_count: int = 0
+    fallback_origin_decision_count: int = 0
+    final_action_changed_count: int = 0
     report_path: str | None = None
     notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

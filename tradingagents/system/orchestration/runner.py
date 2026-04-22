@@ -390,6 +390,13 @@ class TradingSystemRunner:
         block_reason_counts: dict[str, int] = {}
         upstream_retry_count = 0
         upstream_failure_counts: dict[str, int] = {}
+        promoted_buy_count = 0
+        promoted_buy_from_debate_count = 0
+        blocked_buy_due_to_fallback_count = 0
+        blocked_buy_due_to_thesis_inconsistency_count = 0
+        action_thesis_mismatch_count = 0
+        fallback_origin_decision_count = 0
+        final_action_changed_count = 0
 
         shortlist, skipped_symbols, shortlist_data_coverage = self._validate_shortlist_data(shortlist, run_date)
         rejected_symbols.update(skipped_symbols)
@@ -433,6 +440,23 @@ class TradingSystemRunner:
                     self._increment_counter(upstream_failure_counts, str(error_type), int(count))
             if source_extra.get("upstream_fallback_mode") == "research_error_no_entry":
                 self._increment_counter(block_reason_counts, "upstream_fallback")
+            if bool(source_extra.get("fallback_origin")):
+                fallback_origin_decision_count += 1
+            if bool(source_extra.get("buy_promotion_applied")):
+                promoted_buy_count += 1
+            if source_extra.get("buy_promotion_source") == "debate_bull":
+                promoted_buy_from_debate_count += 1
+            if bool(source_extra.get("buy_blocked_due_to_fallback")):
+                blocked_buy_due_to_fallback_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_fallback")
+            if bool(source_extra.get("buy_blocked_due_to_thesis_inconsistency")):
+                blocked_buy_due_to_thesis_inconsistency_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_thesis")
+            if bool(source_extra.get("action_thesis_mismatch_detected")):
+                action_thesis_mismatch_count += 1
+                self._increment_counter(block_reason_counts, "action_thesis_mismatch")
+            if bool(source_extra.get("final_action_changed")):
+                final_action_changed_count += 1
 
             market_bar = self.provider.get_latest_bar(asset.symbol, run_date)
             earnings_event = self.provider.get_earnings_event(asset.symbol, run_date)
@@ -559,6 +583,13 @@ class TradingSystemRunner:
             upstream_retry_count=upstream_retry_count,
             upstream_failure_counts=upstream_failure_counts,
             flat_book_suppressed=flat_book_suppressed,
+            promoted_buy_count=promoted_buy_count,
+            promoted_buy_from_debate_count=promoted_buy_from_debate_count,
+            blocked_buy_due_to_fallback_count=blocked_buy_due_to_fallback_count,
+            blocked_buy_due_to_thesis_inconsistency_count=blocked_buy_due_to_thesis_inconsistency_count,
+            action_thesis_mismatch_count=action_thesis_mismatch_count,
+            fallback_origin_decision_count=fallback_origin_decision_count,
+            final_action_changed_count=final_action_changed_count,
             notes=[],
             warnings=warnings,
         )

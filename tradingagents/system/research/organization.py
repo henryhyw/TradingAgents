@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 
 import pandas as pd
 
@@ -24,6 +25,50 @@ from .adapter import ResearchAdapter
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
+
+
+_BULLISH_THESIS_HINTS = (
+    "buy",
+    "accumulate",
+    "entry",
+    "initiate",
+    "long",
+    "upside",
+    "bullish",
+    "breakout",
+    "momentum",
+    "outperform",
+    "relative strength",
+    "supportive",
+    "favorable setup",
+)
+_BEARISH_THESIS_HINTS = (
+    "sell",
+    "trim",
+    "exit",
+    "underweight",
+    "bearish",
+    "downside",
+    "avoid new entries",
+    "unfavorable risk/reward",
+    "wait for pullback",
+    "de-risk",
+    "reduce exposure",
+    "not a buy",
+    "no entry",
+    "no-entry",
+)
+_NO_ENTRY_THESIS_HINTS = (
+    "avoid",
+    "no entry",
+    "no-entry",
+    "not a buy",
+    "defer",
+    "wait for pullback",
+    "insufficient research",
+    "fallback",
+    "hold off",
+)
 
 
 class ResearchOrganization:
@@ -339,6 +384,135 @@ class ResearchOrganization:
             return False, "short_term_return_not_positive"
         return True, "entry_gate_passed"
 
+    @staticmethod
+    def _thesis_semantics(thesis: str) -> dict[str, int | bool]:
+        normalized = re.sub(r"\s+", " ", (thesis or "").lower()).strip()
+        bullish_hits = sum(1 for token in _BULLISH_THESIS_HINTS if token in normalized)
+        bearish_hits = sum(1 for token in _BEARISH_THESIS_HINTS if token in normalized)
+        no_entry_hits = sum(1 for token in _NO_ENTRY_THESIS_HINTS if token in normalized)
+        strongly_bearish = no_entry_hits > 0 or bearish_hits >= bullish_hits + 2
+        bullish_supported = no_entry_hits == 0 and bullish_hits >= max(1, bearish_hits)
+        return {
+            "bullish_hits": bullish_hits,
+            "bearish_hits": bearish_hits,
+            "no_entry_hits": no_entry_hits,
+            "strongly_bearish": strongly_bearish,
+            "bullish_supported": bullish_supported,
+        }
+
+    @staticmethod
+    def _is_fallback_origin(decision: ResearchDecision) -> tuple[bool, str | None]:
+        parser_mode = decision.source_metadata.parser_mode.lower()
+        extra = decision.source_metadata.extra
+        fallback_mode = str(extra.get("upstream_fallback_mode", "")).lower()
+        if parser_mode == "upstream_error_no_entry":
+            return True, "parser_mode_upstream_error_no_entry"
+        if fallback_mode in {"research_error_no_entry", "upstream_error_no_entry"}:
+            return True, f"upstream_fallback_mode={fallback_mode}"
+        for flag in decision.risk_flags:
+            lowered = flag.lower()
+            if lowered.startswith("research_error:"):
+                return True, f"risk_flag:{flag}"
+            if lowered in {"upstream_graph_failure", "insufficient_research_confidence"}:
+                return True, f"risk_flag:{flag}"
+        thesis_lowered = decision.thesis.lower()
+        if "insufficient research confidence" in thesis_lowered:
+            return True, "thesis_insufficient_research_confidence"
+        return False, None
+
+    def _buy_promotion_gate(
+        self,
+        decision: ResearchDecision,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+        debate: DebateSummary,
+    ) -> tuple[bool, str]:
+        is_fallback_origin, _ = self._is_fallback_origin(decision)
+        if is_fallback_origin:
+            return False, "fallback_origin_non_promotable"
+        if decision.confidence < 0.55:
+            return False, "decision_confidence_below_threshold"
+        if debate.confidence_balance < 0.52:
+            return False, "debate_balance_below_threshold"
+        semantics = self._thesis_semantics(decision.thesis)
+        if bool(semantics["no_entry_hits"]):
+            return False, "thesis_explicit_no_entry_language"
+        if bool(semantics["strongly_bearish"]):
+            return False, "thesis_bearish_polarity"
+        entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo)
+        if not entry_ok:
+            return False, entry_reason
+        return True, "entry_gate_passed"
+
+    @staticmethod
+    def _fallback_label(decision: ResearchDecision) -> str:
+        extra = decision.source_metadata.extra
+        failure_type = extra.get("upstream_failure_type")
+        if isinstance(failure_type, str) and failure_type:
+            return failure_type
+        failure_counts = extra.get("upstream_failure_counts")
+        if isinstance(failure_counts, dict) and failure_counts:
+            failure_type = next(iter(failure_counts.keys()))
+            if isinstance(failure_type, str):
+                return failure_type
+        return "upstream_failure"
+
+    def _synthesize_final_thesis(
+        self,
+        *,
+        final_action: TradeAction,
+        decision: ResearchDecision,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+        has_inventory: bool,
+        fallback_origin: bool,
+    ) -> str:
+        if final_action == TradeAction.BUY:
+            regime_text = "Regime context is favorable for selective long entries."
+            if regime is not None:
+                regime_text = (
+                    f"Regime is {regime.label.value} with risk budget multiplier "
+                    f"{regime.risk_budget_multiplier:.2f}, supporting measured long exposure."
+                )
+            candidate_text = "Liquidity and ranking pre-screens passed."
+            if candidate is not None:
+                candidate_text = (
+                    f"{candidate.symbol} remains eligible with ADV20 ${candidate.avg_dollar_volume_20d:,.0f}, "
+                    f"20d return {candidate.return_20d:.2%}, and relative strength {candidate.relative_strength_20d:.2%}."
+                )
+            return (
+                "Entry rationale: initiate a long position because cross-checks are supportive now. "
+                f"{regime_text} {candidate_text} "
+                f"Technical evidence: {technical_memo.summary} "
+                f"Decision confidence is {decision.confidence:.2f}; position sizing remains risk-constrained."
+            )
+        if final_action == TradeAction.AVOID:
+            if fallback_origin:
+                return (
+                    "No-entry rationale: upstream research execution failed, so this signal is marked "
+                    "insufficient research confidence and cannot be traded."
+                    f" Failure type: {self._fallback_label(decision)}."
+                )
+            if has_inventory:
+                return (
+                    "No-entry rationale: evidence does not justify adding to the existing long, "
+                    "so the position is held unchanged instead of increasing exposure."
+                )
+            return (
+                "No-entry rationale: current evidence does not justify initiating a new long position "
+                "under long-only constraints."
+            )
+        if final_action == TradeAction.SELL:
+            return (
+                "Exit rationale: existing long inventory should be reduced or closed due to deteriorating "
+                "risk/reward versus current portfolio constraints."
+            )
+        if has_inventory:
+            return "Hold rationale: maintain the existing long position while waiting for clearer directional evidence."
+        return "Hold rationale: remain flat because the setup is not sufficiently compelling for a new long entry."
+
     def _preferred_action_from_debate(self, winning_side: str, has_inventory: bool) -> TradeAction:
         if winning_side == "bull":
             return TradeAction.BUY
@@ -359,27 +533,74 @@ class ResearchOrganization:
         original_action = decision.action
         final_action = decision.action
         override_reason: str | None = None
+        override_reasons: list[str] = []
+        final_action_changed = False
+        promoted_buy = False
+        promoted_buy_from_debate = False
+        buy_blocked_due_to_fallback = False
+        buy_blocked_due_to_thesis_inconsistency = False
+        action_thesis_mismatch_detected = False
+        consistency_enforcement_changed_action = False
+
+        fallback_origin, fallback_reason = self._is_fallback_origin(decision)
 
         if final_action == TradeAction.SELL and not has_inventory:
             final_action = TradeAction.AVOID
-            override_reason = "sell_recast_to_avoid_no_inventory"
-
-        if debate.winning_side == "bear" and not has_inventory and final_action == TradeAction.SELL:
-            final_action = TradeAction.AVOID
-            override_reason = override_reason or "debate_bear_flat_book_maps_to_avoid"
+            final_action_changed = True
+            override_reasons.append("sell_recast_to_avoid_no_inventory")
 
         if debate.winning_side == "bull" and final_action in {TradeAction.SELL, TradeAction.HOLD, TradeAction.AVOID}:
-            entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo)
+            entry_ok, entry_reason = self._buy_promotion_gate(
+                decision=decision,
+                candidate=candidate,
+                regime=regime,
+                technical_memo=technical_memo,
+                debate=debate,
+            )
             if entry_ok:
                 final_action = TradeAction.BUY
-                override_reason = f"debate_bull_entry_gate_passed:{entry_reason}"
+                final_action_changed = final_action != original_action or final_action_changed
+                promoted_buy = True
+                promoted_buy_from_debate = True
+                override_reasons.append(f"debate_bull_entry_gate_passed:{entry_reason}")
             else:
-                override_reason = override_reason or f"debate_bull_override_rejected:{entry_reason}"
+                override_reasons.append(f"debate_bull_override_rejected:{entry_reason}")
+                if entry_reason == "fallback_origin_non_promotable":
+                    buy_blocked_due_to_fallback = True
+                if entry_reason in {"thesis_explicit_no_entry_language", "thesis_bearish_polarity"}:
+                    buy_blocked_due_to_thesis_inconsistency = True
+
+        thesis_semantics = self._thesis_semantics(decision.thesis)
+        if final_action == TradeAction.BUY:
+            if fallback_origin:
+                final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
+                final_action_changed = True
+                consistency_enforcement_changed_action = True
+                buy_blocked_due_to_fallback = True
+                action_thesis_mismatch_detected = True
+                override_reasons.append(f"buy_blocked_fallback_origin:{fallback_reason or 'unknown'}")
+            elif bool(thesis_semantics["no_entry_hits"]) or bool(thesis_semantics["strongly_bearish"]):
+                final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
+                final_action_changed = True
+                consistency_enforcement_changed_action = True
+                buy_blocked_due_to_thesis_inconsistency = True
+                action_thesis_mismatch_detected = True
+                override_reasons.append("buy_blocked_thesis_inconsistency")
+
+        if final_action == TradeAction.SELL and not has_inventory:
+            final_action = TradeAction.AVOID
+            final_action_changed = True
+            override_reasons.append("sell_recast_to_avoid_no_inventory")
 
         preferred_action = self._preferred_action_from_debate(debate.winning_side, has_inventory)
         aligned = final_action == preferred_action
-        if not aligned and override_reason is None:
-            override_reason = f"debate_{debate.winning_side}_preferred_{preferred_action.value}_but_final_{final_action.value}"
+        if not aligned:
+            override_reasons.append(
+                f"debate_{debate.winning_side}_preferred_{preferred_action.value}_but_final_{final_action.value}"
+            )
+
+        if override_reasons:
+            override_reason = ";".join(dict.fromkeys(override_reasons))
 
         desired_position_fraction = decision.desired_position_fraction
         if final_action != TradeAction.BUY:
@@ -387,9 +608,42 @@ class ResearchOrganization:
         elif desired_position_fraction is None or desired_position_fraction <= 0:
             desired_position_fraction = min(0.04, self.settings.risk.max_position_size_fraction)
 
+        synthesized_thesis = self._synthesize_final_thesis(
+            final_action=final_action,
+            decision=decision,
+            candidate=candidate,
+            regime=regime,
+            technical_memo=technical_memo,
+            has_inventory=has_inventory,
+            fallback_origin=fallback_origin,
+        )
+        thesis_rewritten = synthesized_thesis.strip() != decision.thesis.strip()
+
+        updated_source_extra = dict(decision.source_metadata.extra)
+        updated_source_extra.update(
+            {
+                "fallback_origin": fallback_origin,
+                "fallback_origin_reason": fallback_reason,
+                "buy_promotion_applied": promoted_buy,
+                "buy_promotion_source": "debate_bull" if promoted_buy_from_debate else None,
+                "buy_blocked_due_to_fallback": buy_blocked_due_to_fallback,
+                "buy_blocked_due_to_thesis_inconsistency": buy_blocked_due_to_thesis_inconsistency,
+                "action_thesis_mismatch_detected": action_thesis_mismatch_detected,
+                "final_action_changed": final_action_changed or (original_action != final_action),
+                "final_action_changed_after_consistency_enforcement": consistency_enforcement_changed_action,
+                "final_thesis_rewritten": thesis_rewritten,
+                "thesis_semantics": thesis_semantics,
+                "final_action": final_action.value,
+            }
+        )
+
         updated_risk_flags = list(
             dict.fromkeys(
-                decision.risk_flags + ([f"action_override:{override_reason}"] if override_reason else [])
+                decision.risk_flags
+                + ([f"action_override:{override_reason}"] if override_reason else [])
+                + (["buy_blocked_due_to_fallback"] if buy_blocked_due_to_fallback else [])
+                + (["buy_blocked_due_to_thesis_inconsistency"] if buy_blocked_due_to_thesis_inconsistency else [])
+                + (["action_thesis_mismatch_detected"] if action_thesis_mismatch_detected else [])
             )
         )
         updated_decision = decision.model_copy(
@@ -397,6 +651,8 @@ class ResearchOrganization:
                 "action": final_action,
                 "desired_position_fraction": desired_position_fraction,
                 "risk_flags": updated_risk_flags,
+                "thesis": synthesized_thesis,
+                "source_metadata": decision.source_metadata.model_copy(update={"extra": updated_source_extra}),
             }
         )
         updated_key_points = [point for point in debate.key_points if not point.startswith("final_action=")]
@@ -411,15 +667,6 @@ class ResearchOrganization:
                 "key_points": updated_key_points,
             }
         )
-        if original_action != final_action:
-            updated_decision = updated_decision.model_copy(
-                update={
-                    "thesis": (
-                        f"{updated_decision.thesis} Final adjudication adjusted action from "
-                        f"{original_action.value.upper()} to {final_action.value.upper()} for long-only semantics."
-                    )
-                }
-            )
         return updated_decision, updated_debate
 
     def _bull_bear_and_debate(

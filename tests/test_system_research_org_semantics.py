@@ -17,17 +17,31 @@ from .system_helpers import FakeMarketDataProvider, make_price_history, symbols_
 
 
 class StaticActionAdapter(ResearchAdapter):
-    def __init__(self, action: TradeAction):
+    def __init__(
+        self,
+        action: TradeAction,
+        *,
+        confidence: float = 0.58,
+        thesis: str | None = None,
+        parser_mode: str = "deterministic",
+        risk_flags: list[str] | None = None,
+        source_extra: dict | None = None,
+    ):
         self.action = action
+        self.confidence = confidence
+        self.thesis = thesis or f"Static adapter action {self.action.value}"
+        self.parser_mode = parser_mode
+        self.risk_flags = risk_flags or []
+        self.source_extra = source_extra or {}
 
     def research(self, symbol: str, as_of_date: date) -> ResearchDecision:
         return ResearchDecision(
             symbol=symbol,
             as_of_date=as_of_date,
             action=self.action,
-            confidence=0.58,
-            thesis=f"Static adapter action {self.action.value}",
-            risk_flags=[],
+            confidence=self.confidence,
+            thesis=self.thesis,
+            risk_flags=self.risk_flags,
             invalidation_conditions=["n/a"],
             time_horizon="1-4 weeks",
             desired_position_fraction=0.0 if self.action != TradeAction.BUY else 0.03,
@@ -35,7 +49,8 @@ class StaticActionAdapter(ResearchAdapter):
                 research_adapter="unit_test",
                 llm_provider="none",
                 llm_model="none",
-                parser_mode="deterministic",
+                parser_mode=self.parser_mode,
+                extra=self.source_extra,
             ),
         )
 
@@ -104,3 +119,56 @@ def test_research_org_promotes_bull_non_entry_to_buy(monkeypatch, tmp_path):
     assert bundle.debate_summary.final_action == TradeAction.BUY
     assert bundle.debate_summary.override_reason is not None
     assert "entry_gate_passed" in bundle.debate_summary.override_reason
+
+
+def test_research_org_blocks_buy_promotion_for_fallback_origin(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=1.2, volume=7_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(
+        settings=settings,
+        provider=provider,
+        adapter=StaticActionAdapter(
+            TradeAction.AVOID,
+            confidence=0.80,
+            parser_mode="upstream_error_no_entry",
+            thesis="Upstream fallback no-entry state due to ResourceExhausted.",
+            risk_flags=["upstream_graph_failure", "insufficient_research_confidence"],
+            source_extra={"upstream_fallback_mode": "research_error_no_entry", "upstream_failure_type": "ResourceExhausted"},
+        ),
+    )
+
+    decision, bundle = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert bundle.debate_summary.winning_side == "bull"
+    assert decision.action == TradeAction.AVOID
+    assert bundle.debate_summary.final_action == TradeAction.AVOID
+    assert decision.source_metadata.extra.get("buy_promotion_applied") is False
+    assert decision.source_metadata.extra.get("buy_blocked_due_to_fallback") is True
+    assert "insufficient research confidence" in decision.thesis.lower()
+
+
+def test_research_org_blocks_bearish_buy_thesis_when_flat(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=1.2, volume=7_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(
+        settings=settings,
+        provider=provider,
+        adapter=StaticActionAdapter(
+            TradeAction.BUY,
+            confidence=0.71,
+            thesis="Definitive SELL: avoid new entries, trim risk, and wait for pullback due to unfavorable risk/reward.",
+        ),
+    )
+
+    decision, bundle = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert decision.action == TradeAction.AVOID
+    assert bundle.debate_summary.final_action == TradeAction.AVOID
+    assert decision.source_metadata.extra.get("buy_blocked_due_to_thesis_inconsistency") is True
+    assert decision.source_metadata.extra.get("action_thesis_mismatch_detected") is True

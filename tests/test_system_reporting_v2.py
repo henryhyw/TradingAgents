@@ -116,6 +116,13 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         upstream_retry_count=1,
         upstream_failure_counts={"ResourceExhausted": 1},
         flat_book_suppressed=False,
+        promoted_buy_count=1,
+        promoted_buy_from_debate_count=1,
+        blocked_buy_due_to_fallback_count=0,
+        blocked_buy_due_to_thesis_inconsistency_count=0,
+        action_thesis_mismatch_count=0,
+        fallback_origin_decision_count=0,
+        final_action_changed_count=1,
     )
     shortlist = [
         ScreenedAsset(
@@ -156,4 +163,6 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "## Risk Committee" in content
     assert "## Diagnostics" in content
     assert "final_action=buy" in content.lower()
+    assert "BUY promotion diagnostics" in content
+    assert "Consistency diagnostics" in content
     assert (tmp_path / as_of.isoformat() / "summary.json").exists()

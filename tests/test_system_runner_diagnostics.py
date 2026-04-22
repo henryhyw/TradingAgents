@@ -62,4 +62,7 @@ def test_runner_emits_action_and_block_diagnostics(monkeypatch, tmp_path):
     assert summary.upstream_failure_counts.get("ResourceExhausted") == 1
     assert summary.block_reason_counts.get("upstream_fallback", 0) >= 1
     assert summary.block_reason_counts.get("no_entry", 0) >= 1
+    assert isinstance(summary.blocked_buy_due_to_fallback_count, int)
+    assert summary.fallback_origin_decision_count >= 1
+    assert summary.promoted_buy_count == 0
     assert summary.flat_book_suppressed
