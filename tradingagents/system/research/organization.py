@@ -69,6 +69,25 @@ _NO_ENTRY_THESIS_HINTS = (
     "fallback",
     "hold off",
 )
+_BUY_INCONSISTENT_PHRASES = (
+    "sell",
+    "avoid new entries",
+    "trim existing positions",
+    "reduce exposure",
+    "wait for pullback",
+    "unfavorable risk/reward",
+    "exit current positions",
+    "underweight",
+    "capital preservation over chasing rally",
+    "no margin of safety",
+    "do not initiate new position",
+    "tactical wait",
+    "hold existing but defer new capital",
+    "no-entry",
+    "no entry",
+    "not a buy",
+    "defer new capital",
+)
 
 
 class ResearchOrganization:
@@ -405,10 +424,18 @@ class ResearchOrganization:
         parser_mode = decision.source_metadata.parser_mode.lower()
         extra = decision.source_metadata.extra
         fallback_mode = str(extra.get("upstream_fallback_mode", "")).lower()
+        upstream_failure_type = str(extra.get("upstream_failure_type", "")).strip()
         if parser_mode == "upstream_error_no_entry":
             return True, "parser_mode_upstream_error_no_entry"
+        if fallback_mode and fallback_mode != "none":
+            return True, f"upstream_fallback_mode={fallback_mode}"
         if fallback_mode in {"research_error_no_entry", "upstream_error_no_entry"}:
             return True, f"upstream_fallback_mode={fallback_mode}"
+        notes_joined = " ".join(decision.source_metadata.notes).lower()
+        if "structured parser fallback applied" in notes_joined:
+            return True, "source_notes_parser_fallback"
+        if upstream_failure_type in {"ResourceExhausted", "InvalidArgument"} and parser_mode != "llm_json":
+            return True, f"upstream_failure_type={upstream_failure_type}_without_llm_json"
         for flag in decision.risk_flags:
             lowered = flag.lower()
             if lowered.startswith("research_error:"):
@@ -418,7 +445,25 @@ class ResearchOrganization:
         thesis_lowered = decision.thesis.lower()
         if "insufficient research confidence" in thesis_lowered:
             return True, "thesis_insufficient_research_confidence"
+        if thesis_lowered.strip().startswith("research adapter fallback"):
+            return True, "thesis_research_adapter_fallback"
         return False, None
+
+    @staticmethod
+    def _find_buy_inconsistent_phrases(thesis: str) -> list[str]:
+        normalized = re.sub(r"\s+", " ", (thesis or "").lower()).strip()
+        return [phrase for phrase in _BUY_INCONSISTENT_PHRASES if phrase in normalized]
+
+    def _is_buy_thesis_consistent(self, thesis: str) -> tuple[bool, list[str]]:
+        inconsistent_phrases = self._find_buy_inconsistent_phrases(thesis)
+        semantics = self._thesis_semantics(thesis)
+        bullish_supported = bool(semantics.get("bullish_supported", False))
+        if inconsistent_phrases or not bullish_supported:
+            reasons = [f"inconsistent_phrase:{phrase}" for phrase in inconsistent_phrases]
+            if not bullish_supported:
+                reasons.append("bullish_support_insufficient")
+            return False, reasons
+        return True, []
 
     def _buy_promotion_gate(
         self,
@@ -431,15 +476,15 @@ class ResearchOrganization:
         is_fallback_origin, _ = self._is_fallback_origin(decision)
         if is_fallback_origin:
             return False, "fallback_origin_non_promotable"
+        if any(flag.lower() == "insufficient_research_confidence" for flag in decision.risk_flags):
+            return False, "insufficient_research_confidence"
         if decision.confidence < 0.55:
             return False, "decision_confidence_below_threshold"
-        if debate.confidence_balance < 0.52:
+        if debate.confidence_balance < 0.58:
             return False, "debate_balance_below_threshold"
-        semantics = self._thesis_semantics(decision.thesis)
-        if bool(semantics["no_entry_hits"]):
-            return False, "thesis_explicit_no_entry_language"
-        if bool(semantics["strongly_bearish"]):
-            return False, "thesis_bearish_polarity"
+        inconsistent_phrases = self._find_buy_inconsistent_phrases(decision.thesis)
+        if inconsistent_phrases:
+            return False, f"thesis_inconsistent:{inconsistent_phrases[0]}"
         entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo)
         if not entry_ok:
             return False, entry_reason
@@ -541,6 +586,11 @@ class ResearchOrganization:
         buy_blocked_due_to_thesis_inconsistency = False
         action_thesis_mismatch_detected = False
         consistency_enforcement_changed_action = False
+        buy_rewrite_attempted = False
+        buy_rewrite_success = False
+        buy_rewrite_failure = False
+        final_action_downgraded = False
+        inconsistent_buy_prevented = False
 
         fallback_origin, fallback_reason = self._is_fallback_origin(decision)
 
@@ -567,25 +617,52 @@ class ResearchOrganization:
                 override_reasons.append(f"debate_bull_override_rejected:{entry_reason}")
                 if entry_reason == "fallback_origin_non_promotable":
                     buy_blocked_due_to_fallback = True
-                if entry_reason in {"thesis_explicit_no_entry_language", "thesis_bearish_polarity"}:
+                    inconsistent_buy_prevented = True
+                if entry_reason.startswith("thesis_inconsistent:"):
                     buy_blocked_due_to_thesis_inconsistency = True
+                    inconsistent_buy_prevented = True
+                if entry_reason == "insufficient_research_confidence":
+                    buy_blocked_due_to_fallback = True
+                    inconsistent_buy_prevented = True
+
+        if final_action == TradeAction.BUY and fallback_origin:
+            final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
+            final_action_changed = True
+            consistency_enforcement_changed_action = True
+            final_action_downgraded = True
+            buy_blocked_due_to_fallback = True
+            action_thesis_mismatch_detected = True
+            inconsistent_buy_prevented = True
+            override_reasons.append(f"buy_blocked_fallback_origin:{fallback_reason or 'unknown'}")
 
         thesis_semantics = self._thesis_semantics(decision.thesis)
         if final_action == TradeAction.BUY:
-            if fallback_origin:
+            buy_rewrite_attempted = True
+            buy_thesis_candidate = self._synthesize_final_thesis(
+                final_action=TradeAction.BUY,
+                decision=decision,
+                candidate=candidate,
+                regime=regime,
+                technical_memo=technical_memo,
+                has_inventory=has_inventory,
+                fallback_origin=fallback_origin,
+            )
+            buy_consistent, buy_inconsistency_reasons = self._is_buy_thesis_consistent(buy_thesis_candidate)
+            if buy_consistent:
+                buy_rewrite_success = True
+            else:
+                buy_rewrite_failure = True
                 final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
                 final_action_changed = True
                 consistency_enforcement_changed_action = True
-                buy_blocked_due_to_fallback = True
-                action_thesis_mismatch_detected = True
-                override_reasons.append(f"buy_blocked_fallback_origin:{fallback_reason or 'unknown'}")
-            elif bool(thesis_semantics["no_entry_hits"]) or bool(thesis_semantics["strongly_bearish"]):
-                final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
-                final_action_changed = True
-                consistency_enforcement_changed_action = True
+                final_action_downgraded = True
                 buy_blocked_due_to_thesis_inconsistency = True
                 action_thesis_mismatch_detected = True
-                override_reasons.append("buy_blocked_thesis_inconsistency")
+                inconsistent_buy_prevented = True
+                override_reasons.append(
+                    "buy_rewrite_failed:"
+                    + ",".join(dict.fromkeys(reason.replace("inconsistent_phrase:", "") for reason in buy_inconsistency_reasons))
+                )
 
         if final_action == TradeAction.SELL and not has_inventory:
             final_action = TradeAction.AVOID
@@ -631,6 +708,13 @@ class ResearchOrganization:
                 "action_thesis_mismatch_detected": action_thesis_mismatch_detected,
                 "final_action_changed": final_action_changed or (original_action != final_action),
                 "final_action_changed_after_consistency_enforcement": consistency_enforcement_changed_action,
+                "fallback_buy_blocked": buy_blocked_due_to_fallback,
+                "thesis_inconsistency_blocked": buy_blocked_due_to_thesis_inconsistency,
+                "buy_rewrite_attempted": buy_rewrite_attempted,
+                "buy_rewrite_success": buy_rewrite_success,
+                "buy_rewrite_failure": buy_rewrite_failure,
+                "final_action_downgraded": final_action_downgraded,
+                "inconsistent_buy_prevented": inconsistent_buy_prevented,
                 "final_thesis_rewritten": thesis_rewritten,
                 "thesis_semantics": thesis_semantics,
                 "final_action": final_action.value,

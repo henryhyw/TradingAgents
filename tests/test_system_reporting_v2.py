@@ -123,6 +123,13 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         action_thesis_mismatch_count=0,
         fallback_origin_decision_count=0,
         final_action_changed_count=1,
+        fallback_buy_block_count=0,
+        thesis_inconsistency_block_count=0,
+        buy_rewrite_attempt_count=1,
+        buy_rewrite_success_count=1,
+        buy_rewrite_failure_count=0,
+        final_action_downgrade_count=0,
+        inconsistent_buy_prevented_count=0,
     )
     shortlist = [
         ScreenedAsset(
@@ -165,4 +172,5 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "final_action=buy" in content.lower()
     assert "BUY promotion diagnostics" in content
     assert "Consistency diagnostics" in content
+    assert "Semantic guardrails" in content
     assert (tmp_path / as_of.isoformat() / "summary.json").exists()

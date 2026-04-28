@@ -131,13 +131,24 @@ def generate_daily_report(
         if decision.source_metadata.parser_mode == "upstream_error_no_entry" or source_extra.get("fallback_origin"):
             lines.append("  Fallback: upstream failure/insufficient-research state (non-tradable no-entry).")
         if source_extra.get("buy_promotion_applied"):
-            lines.append(f"  Promotion: BUY promoted via {source_extra.get('buy_promotion_source') or 'adjudication'}.")
+            lines.append(
+                f"  Promotion: BUY promoted via {source_extra.get('buy_promotion_source') or 'adjudication'} after validation."
+            )
         if source_extra.get("buy_blocked_due_to_fallback"):
             lines.append("  Promotion Block: BUY blocked because research originated from upstream fallback.")
         if source_extra.get("buy_blocked_due_to_thesis_inconsistency"):
             lines.append("  Promotion Block: BUY blocked due to bearish/no-entry thesis semantics.")
         if source_extra.get("action_thesis_mismatch_detected"):
             lines.append("  Consistency: action/thesis mismatch detected and corrected.")
+        if source_extra.get("final_action_downgraded"):
+            lines.append("  Consistency: final action downgraded after semantic validation.")
+        if source_extra.get("buy_rewrite_attempted"):
+            lines.append(
+                "  BUY rewrite: "
+                f"attempted={bool(source_extra.get('buy_rewrite_attempted'))}, "
+                f"success={bool(source_extra.get('buy_rewrite_success'))}, "
+                f"failure={bool(source_extra.get('buy_rewrite_failure'))}"
+            )
         if bundle is not None:
             lines.append(
                 f"  Debate: winner={bundle.debate_summary.winning_side}, "
@@ -261,6 +272,16 @@ def generate_daily_report(
             f"action_thesis_mismatch={summary.action_thesis_mismatch_count}, "
             f"fallback_origin_decisions={summary.fallback_origin_decision_count}, "
             f"final_action_changed={summary.final_action_changed_count}"
+        )
+        lines.append(
+            "- Semantic guardrails: "
+            f"fallback_buy_block={summary.fallback_buy_block_count}, "
+            f"thesis_inconsistency_block={summary.thesis_inconsistency_block_count}, "
+            f"buy_rewrite_attempt={summary.buy_rewrite_attempt_count}, "
+            f"buy_rewrite_success={summary.buy_rewrite_success_count}, "
+            f"buy_rewrite_failure={summary.buy_rewrite_failure_count}, "
+            f"final_action_downgrade={summary.final_action_downgrade_count}, "
+            f"inconsistent_buy_prevented={summary.inconsistent_buy_prevented_count}"
         )
         lines.append(f"- Flat-book suppressed: {summary.flat_book_suppressed}")
 

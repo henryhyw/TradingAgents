@@ -397,6 +397,13 @@ class TradingSystemRunner:
         action_thesis_mismatch_count = 0
         fallback_origin_decision_count = 0
         final_action_changed_count = 0
+        fallback_buy_block_count = 0
+        thesis_inconsistency_block_count = 0
+        buy_rewrite_attempt_count = 0
+        buy_rewrite_success_count = 0
+        buy_rewrite_failure_count = 0
+        final_action_downgrade_count = 0
+        inconsistent_buy_prevented_count = 0
 
         shortlist, skipped_symbols, shortlist_data_coverage = self._validate_shortlist_data(shortlist, run_date)
         rejected_symbols.update(skipped_symbols)
@@ -457,6 +464,24 @@ class TradingSystemRunner:
                 self._increment_counter(block_reason_counts, "action_thesis_mismatch")
             if bool(source_extra.get("final_action_changed")):
                 final_action_changed_count += 1
+            if bool(source_extra.get("fallback_buy_blocked")):
+                fallback_buy_block_count += 1
+                self._increment_counter(block_reason_counts, "fallback_buy_block")
+            if bool(source_extra.get("thesis_inconsistency_blocked")):
+                thesis_inconsistency_block_count += 1
+                self._increment_counter(block_reason_counts, "thesis_inconsistency_block")
+            if bool(source_extra.get("buy_rewrite_attempted")):
+                buy_rewrite_attempt_count += 1
+            if bool(source_extra.get("buy_rewrite_success")):
+                buy_rewrite_success_count += 1
+            if bool(source_extra.get("buy_rewrite_failure")):
+                buy_rewrite_failure_count += 1
+            if bool(source_extra.get("final_action_downgraded")):
+                final_action_downgrade_count += 1
+                self._increment_counter(block_reason_counts, "final_action_downgrade")
+            if bool(source_extra.get("inconsistent_buy_prevented")):
+                inconsistent_buy_prevented_count += 1
+                self._increment_counter(block_reason_counts, "inconsistent_buy_prevented")
 
             market_bar = self.provider.get_latest_bar(asset.symbol, run_date)
             earnings_event = self.provider.get_earnings_event(asset.symbol, run_date)
@@ -590,6 +615,13 @@ class TradingSystemRunner:
             action_thesis_mismatch_count=action_thesis_mismatch_count,
             fallback_origin_decision_count=fallback_origin_decision_count,
             final_action_changed_count=final_action_changed_count,
+            fallback_buy_block_count=fallback_buy_block_count,
+            thesis_inconsistency_block_count=thesis_inconsistency_block_count,
+            buy_rewrite_attempt_count=buy_rewrite_attempt_count,
+            buy_rewrite_success_count=buy_rewrite_success_count,
+            buy_rewrite_failure_count=buy_rewrite_failure_count,
+            final_action_downgrade_count=final_action_downgrade_count,
+            inconsistent_buy_prevented_count=inconsistent_buy_prevented_count,
             notes=[],
             warnings=warnings,
         )

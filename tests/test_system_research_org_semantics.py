@@ -55,6 +55,14 @@ class StaticActionAdapter(ResearchAdapter):
         )
 
 
+class InconsistentBuyRewriteOrg(ResearchOrganization):
+    def _synthesize_final_thesis(self, **kwargs):  # type: ignore[override]
+        final_action = kwargs.get("final_action")
+        if final_action == TradeAction.BUY:
+            return "Avoid new entries and wait for pullback due to unfavorable risk/reward."
+        return super()._synthesize_final_thesis(**kwargs)
+
+
 def _candidate(as_of: date) -> CandidateAssessment:
     return CandidateAssessment(
         symbol="AAPL",
@@ -168,7 +176,57 @@ def test_research_org_blocks_bearish_buy_thesis_when_flat(monkeypatch, tmp_path)
 
     decision, bundle = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
 
+    assert decision.action == TradeAction.BUY
+    assert bundle.debate_summary.final_action == TradeAction.BUY
+    assert decision.source_metadata.extra.get("buy_rewrite_attempted") is True
+    assert decision.source_metadata.extra.get("buy_rewrite_success") is True
+    assert "entry rationale" in decision.thesis.lower()
+
+
+def test_research_org_hard_bans_fallback_origin_buy(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=1.2, volume=7_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(
+        settings=settings,
+        provider=provider,
+        adapter=StaticActionAdapter(
+            TradeAction.BUY,
+            confidence=0.82,
+            parser_mode="upstream_error_no_entry",
+            thesis="Research adapter fallback after ResourceExhausted.",
+            risk_flags=["research_error:ResourceExhausted", "upstream_graph_failure", "insufficient_research_confidence"],
+            source_extra={"upstream_fallback_mode": "research_error_no_entry", "upstream_failure_type": "ResourceExhausted"},
+        ),
+    )
+
+    decision, bundle = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
     assert decision.action == TradeAction.AVOID
     assert bundle.debate_summary.final_action == TradeAction.AVOID
-    assert decision.source_metadata.extra.get("buy_blocked_due_to_thesis_inconsistency") is True
-    assert decision.source_metadata.extra.get("action_thesis_mismatch_detected") is True
+    assert decision.source_metadata.extra.get("fallback_buy_blocked") is True
+    assert decision.source_metadata.extra.get("final_action_downgraded") is True
+    assert decision.source_metadata.extra.get("inconsistent_buy_prevented") is True
+
+
+def test_research_org_downgrades_buy_when_rewrite_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=1.2, volume=7_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = InconsistentBuyRewriteOrg(
+        settings=settings,
+        provider=provider,
+        adapter=StaticActionAdapter(TradeAction.BUY, confidence=0.71, thesis="Buy setup from upstream."),
+    )
+
+    decision, bundle = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert decision.action == TradeAction.AVOID
+    assert bundle.debate_summary.final_action == TradeAction.AVOID
+    assert decision.source_metadata.extra.get("buy_rewrite_attempted") is True
+    assert decision.source_metadata.extra.get("buy_rewrite_failure") is True
+    assert decision.source_metadata.extra.get("final_action_downgraded") is True

@@ -65,4 +65,10 @@ def test_runner_emits_action_and_block_diagnostics(monkeypatch, tmp_path):
     assert isinstance(summary.blocked_buy_due_to_fallback_count, int)
     assert summary.fallback_origin_decision_count >= 1
     assert summary.promoted_buy_count == 0
+    assert isinstance(summary.fallback_buy_block_count, int)
+    assert isinstance(summary.buy_rewrite_attempt_count, int)
+    assert isinstance(summary.buy_rewrite_success_count, int)
+    assert isinstance(summary.buy_rewrite_failure_count, int)
+    assert isinstance(summary.final_action_downgrade_count, int)
+    assert isinstance(summary.inconsistent_buy_prevented_count, int)
     assert summary.flat_book_suppressed

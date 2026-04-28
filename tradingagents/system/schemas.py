@@ -455,6 +455,13 @@ class DailyRunSummary(StrictModel):
     action_thesis_mismatch_count: int = 0
     fallback_origin_decision_count: int = 0
     final_action_changed_count: int = 0
+    fallback_buy_block_count: int = 0
+    thesis_inconsistency_block_count: int = 0
+    buy_rewrite_attempt_count: int = 0
+    buy_rewrite_success_count: int = 0
+    buy_rewrite_failure_count: int = 0
+    final_action_downgrade_count: int = 0
+    inconsistent_buy_prevented_count: int = 0
     report_path: str | None = None
     notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
