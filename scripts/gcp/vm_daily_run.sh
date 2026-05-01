@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+DEPLOY_BRANCH="${TRADINGAGENTS_DEPLOY_BRANCH:-main}"
 
 RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-/opt/tradingagents/runtime.env}"
 VENV_DIR="${VENV_DIR:-/opt/tradingagents/venv}"
@@ -24,6 +25,20 @@ LOG_FILE="${APP_HOME}/logs/daily-run.log"
   # shellcheck disable=SC1091
   source "${VENV_DIR}/bin/activate"
   cd "${REPO_ROOT}"
+
+  if [[ -d "${REPO_ROOT}/.git" ]]; then
+    echo "Attempting repo sync from origin/${DEPLOY_BRANCH}..."
+    if git fetch --prune origin "${DEPLOY_BRANCH}" && \
+       git checkout "${DEPLOY_BRANCH}" && \
+       git reset --hard "origin/${DEPLOY_BRANCH}"; then
+      CURRENT_COMMIT="$(git rev-parse HEAD)"
+      echo "Repo sync successful. commit=${CURRENT_COMMIT}"
+    else
+      echo "Repo sync failed; proceeding with current workspace state." >&2
+    fi
+  else
+    echo "No .git directory found under ${REPO_ROOT}; skipping repo sync."
+  fi
 
   AS_OF_DATE="$(python - <<'PY'
 from tradingagents.system.config import load_settings
