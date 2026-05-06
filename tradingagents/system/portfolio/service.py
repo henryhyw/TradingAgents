@@ -20,11 +20,25 @@ from tradingagents.system.schemas import (
 
 
 class PortfolioService:
+    _DEFAULT_TRIM_FRACTION = 0.33
+    _DEFAULT_CORE_TARGET_FRACTION = 0.02
+
     @staticmethod
     def _position_weight(portfolio: PortfolioSnapshot, position: PositionSnapshot | None) -> float:
         if position is None or portfolio.equity <= 0:
             return 0.0
         return max(0.0, position.market_value / portfolio.equity)
+
+    def _lifecycle_state(self, decision: ResearchDecision) -> OrderIntentType | None:
+        if decision.position_lifecycle_state is not None:
+            return decision.position_lifecycle_state
+        raw = decision.source_metadata.extra.get("position_lifecycle_state")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return OrderIntentType(raw)
+        except ValueError:
+            return None
 
     def assess_portfolio_fit(
         self,
@@ -98,9 +112,28 @@ class PortfolioService:
                     warnings=warnings,
                 )
             fits = True
-            target_weight = 0.0
-            recommended_action = OrderIntentType.EXIT
-            rationale = "Exit aligns with risk-approved inventory reduction."
+            lifecycle_state = self._lifecycle_state(decision)
+            trim_fraction = float(decision.source_metadata.extra.get("scale_out_fraction", self._DEFAULT_TRIM_FRACTION))
+            trim_fraction = max(0.05, min(0.8, trim_fraction))
+            if lifecycle_state in {OrderIntentType.TRIM_PARTIAL, OrderIntentType.SCALE_OUT, OrderIntentType.TRIM}:
+                recommended_action = (
+                    lifecycle_state if lifecycle_state in {OrderIntentType.TRIM_PARTIAL, OrderIntentType.SCALE_OUT} else OrderIntentType.TRIM_PARTIAL
+                )
+                target_weight = max(0.0, current_weight * (1.0 - trim_fraction))
+                rationale = f"Partial de-risking requested ({recommended_action.value}) with trim fraction {trim_fraction:.0%}."
+            elif lifecycle_state == OrderIntentType.REDUCE_TO_CORE:
+                core_target = decision.desired_position_fraction
+                if core_target is None or core_target <= 0:
+                    core_target = float(
+                        decision.source_metadata.extra.get("reduce_to_core_target_fraction", self._DEFAULT_CORE_TARGET_FRACTION)
+                    )
+                target_weight = max(0.0, min(current_weight, core_target))
+                recommended_action = OrderIntentType.REDUCE_TO_CORE
+                rationale = "Reducing position to a core allocation while preserving trend participation."
+            else:
+                target_weight = 0.0
+                recommended_action = OrderIntentType.EXIT
+                rationale = "Exit aligns with risk-approved inventory reduction."
         elif decision.action == TradeAction.AVOID:
             if current_position is None or current_position.quantity <= 0:
                 fits = False
@@ -185,7 +218,13 @@ class PortfolioService:
             side = OrderSide.BUY
             delta_value = max(0.0, target_value - current_value)
             quantity = math.floor(delta_value / market_bar.close)
-        elif fit.recommended_action in {OrderIntentType.TRIM, OrderIntentType.EXIT}:
+        elif fit.recommended_action in {
+            OrderIntentType.TRIM,
+            OrderIntentType.TRIM_PARTIAL,
+            OrderIntentType.SCALE_OUT,
+            OrderIntentType.REDUCE_TO_CORE,
+            OrderIntentType.EXIT,
+        }:
             side = OrderSide.SELL
             if fit.recommended_action == OrderIntentType.EXIT:
                 quantity = current_qty

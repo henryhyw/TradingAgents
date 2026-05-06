@@ -147,3 +147,30 @@ DUK,Duke Energy Corporation,Equity,Utilities
 SO,Southern Company,Equity,Utilities
 AEP,American Electric Power Company Inc.,Equity,Utilities
 EXC,Exelon Corporation,Equity,Utilities
+XBI,SPDR S&P Biotech ETF,ETF,Biotechnology
+IBB,iShares Biotechnology ETF,ETF,Biotechnology
+KRE,SPDR S&P Regional Banking ETF,ETF,Regional Banks
+XOP,SPDR S&P Oil & Gas Exploration & Production ETF,ETF,Energy
+XRT,SPDR S&P Retail ETF,ETF,Retail
+IYT,iShares Transportation Average ETF,ETF,Transportation
+XHB,SPDR S&P Homebuilders ETF,ETF,Homebuilders
+ITB,iShares U.S. Home Construction ETF,ETF,Homebuilders
+IGV,iShares Expanded Tech-Software Sector ETF,ETF,Software
+IHI,iShares U.S. Medical Devices ETF,ETF,Medical Devices
+XME,SPDR S&P Metals & Mining ETF,ETF,Metals & Mining
+TAN,Invesco Solar ETF,ETF,Clean Energy
+AVGO,Broadcom Inc.,Equity,Technology
+TSLA,Tesla Inc.,Equity,Consumer Discretionary
+MRVL,Marvell Technology Inc.,Equity,Technology
+ADI,Analog Devices Inc.,Equity,Technology
+SNPS,Synopsys Inc.,Equity,Technology
+CDNS,Cadence Design Systems Inc.,Equity,Technology
+INTC,Intel Corporation,Equity,Technology
+BK,Bank of New York Mellon Corporation,Equity,Financials
+AON,Aon plc,Equity,Financials
+MMC,Marsh & McLennan Companies Inc.,Equity,Financials
+KKR,KKR & Co. Inc.,Equity,Financials
+BX,Blackstone Inc.,Equity,Financials
+MELI,MercadoLibre Inc.,Equity,Consumer Discretionary
+RCL,Royal Caribbean Group,Equity,Consumer Discretionary
+CEG,Constellation Energy Corporation,Equity,Utilities

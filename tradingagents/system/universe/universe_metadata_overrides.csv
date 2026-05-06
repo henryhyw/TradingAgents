@@ -79,3 +79,30 @@ RTX,industrial|defense|quality,XLI,Aerospace & Defense
 LMT,industrial|defense|quality,XLI,Aerospace & Defense
 UPS,industrial|logistics|cyclical,XLI,Transportation & Logistics
 FDX,industrial|logistics|cyclical,XLI,Transportation & Logistics
+XBI,biotech|event_strength|high_beta,XLV,Biotech
+IBB,biotech|growth|healthcare,XLV,Biotech
+KRE,regional_bank|cyclical|event_strength,XLF,Regional Banks
+XOP,energy|upstream|cyclical,XLE,Energy Services
+XRT,consumer|retail|cyclical,XLY,Retail
+IYT,transportation|cyclical|trend,XLI,Transportation
+XHB,housing|cyclical|event_strength,XLY,Homebuilders
+ITB,housing|cyclical|event_strength,XLY,Homebuilders
+IGV,software|growth|momentum,XLK,Software
+IHI,medical_devices|quality|defensive,XLV,Medical Devices
+XME,metals|mining|cyclical,XLB,Metals & Mining
+TAN,clean_energy|high_beta|event_strength,XLI,Clean Energy
+AVGO,mega_cap|semiconductor|quality,XLK,Mega Cap Tech
+TSLA,mega_cap|auto|high_beta|event_strength,XLY,Mega Cap Growth
+MRVL,semiconductor|growth|high_beta,XLK,Semiconductors
+ADI,semiconductor|quality|value,XLK,Semiconductors
+SNPS,software|quality|growth,XLK,Software Infrastructure
+CDNS,software|quality|growth,XLK,Software Infrastructure
+INTC,semiconductor|turnaround|value,XLK,Semiconductors
+BK,financials|custody_bank|quality,XLF,Banks & Custody
+AON,financials|insurance|defensive,XLF,Insurance & Brokers
+MMC,financials|insurance|defensive,XLF,Insurance & Brokers
+KKR,financials|alternative_asset_manager|cyclical,XLF,Alternative Asset Managers
+BX,financials|alternative_asset_manager|cyclical,XLF,Alternative Asset Managers
+MELI,consumer_platform|growth|event_strength,XLY,Global Consumer Platforms
+RCL,travel|cyclical|event_strength,XLY,Travel & Leisure
+CEG,utilities|power|event_strength,XLU,Utilities

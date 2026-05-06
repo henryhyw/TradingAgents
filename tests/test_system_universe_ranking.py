@@ -50,3 +50,4 @@ def test_universe_selector_builds_ranked_shortlist_with_reasons(monkeypatch, tmp
     assert len(shortlist) == 2
     assert all(asset.shortlist_reason for asset in shortlist)
     assert all("momentum" in asset.ranking_breakdown for asset in shortlist if not asset.rejection_reasons)
+    assert all(asset.source_pool in {"core_universe", "sector_etf", "industry_leader", "event_strength"} for asset in screened)

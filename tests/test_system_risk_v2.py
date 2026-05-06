@@ -7,6 +7,7 @@ from tradingagents.system.data import EarningsEvent, MarketBar
 from tradingagents.system.risk import RiskEngine
 from tradingagents.system.schemas import (
     CandidateAssessment,
+    EntryMode,
     PortfolioSnapshot,
     RegimeLabel,
     RegimeSnapshot,
@@ -27,6 +28,8 @@ def _decision() -> ResearchDecision:
         invalidation_conditions=["invalidates"],
         time_horizon="1-4 weeks",
         desired_position_fraction=0.05,
+        entry_mode=EntryMode.BREAKOUT,
+        entry_trigger_reason="breakout_confirmation_passed",
         source_metadata=SourceMetadata(
             research_adapter="unit_test",
             llm_provider="none",
@@ -131,3 +134,34 @@ def test_risk_engine_scales_down_when_correlation_high(monkeypatch, tmp_path):
     )
     assert result.approved
     assert result.approved_size_fraction < 0.05
+
+
+def test_risk_engine_rejects_buy_when_entry_mode_unconfirmed(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    engine = RiskEngine(settings)
+    decision = _decision().model_copy(
+        update={
+            "entry_mode": EntryMode.NONE,
+            "entry_trigger_reason": "missing_breakout_confirmation",
+            "extension_penalty": 0.8,
+            "overheat_penalty": 0.85,
+        }
+    )
+    result = engine.evaluate(
+        decision=decision,
+        portfolio=_portfolio(),
+        current_position=None,
+        market_bar=_bar(),
+        avg_dollar_volume_20d=80_000_000,
+        earnings_event=EarningsEvent(symbol="AAPL"),
+        daily_pnl_fraction=0.0,
+        opening_trades_today=0,
+        losing_exits_today=0,
+        as_of_date=date(2026, 4, 13),
+        candidate=_candidate(),
+        regime=_regime(),
+        sector_exposure_fraction=0.05,
+    )
+    assert not result.approved
+    assert "entry_mode_unconfirmed" in (result.rejection_reason or "")

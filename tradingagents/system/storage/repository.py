@@ -332,6 +332,38 @@ class TradingRepository:
             return None
         return self._from_json(PositionSnapshot, row["json"])
 
+    def get_open_position_holding_days(self, symbol: str, as_of_date: date) -> int | None:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT side, quantity, as_of_date
+                FROM fills
+                WHERE symbol = ?
+                  AND as_of_date <= ?
+                ORDER BY timestamp ASC
+                """,
+                (symbol, as_of_date.isoformat()),
+            ).fetchall()
+        net_quantity = 0
+        entry_date: date | None = None
+        for row in rows:
+            side = row["side"]
+            quantity = int(row["quantity"])
+            fill_date = date.fromisoformat(row["as_of_date"])
+            if side == "buy":
+                previous = net_quantity
+                net_quantity += quantity
+                if previous <= 0 and net_quantity > 0:
+                    entry_date = fill_date
+            else:
+                net_quantity -= quantity
+                if net_quantity <= 0:
+                    net_quantity = 0
+                    entry_date = None
+        if net_quantity <= 0 or entry_date is None:
+            return None
+        return max(0, (as_of_date - entry_date).days)
+
     def list_recent_orders(self, limit: int = 20) -> list[OrderRecord]:
         with connect(self.database_path) as connection:
             rows = connection.execute(

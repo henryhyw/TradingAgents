@@ -178,6 +178,8 @@ class TradingSystemRunner:
             regime_fit_score=asset.regime_fit_score,
             ranking_score=asset.score,
             ranking_breakdown=asset.ranking_breakdown,
+            source_pool=asset.source_pool,
+            event_strength_score=asset.event_strength_score,
             shortlist_reason=asset.shortlist_reason,
             data_quality_warnings=asset.quality_warnings,
         )
@@ -322,6 +324,10 @@ class TradingSystemRunner:
                 "loss",
                 "capacity",
                 "blackout",
+                "extension",
+                "overheat",
+                "breakout",
+                "pullback",
             )
         ):
             return "risk_limits"
@@ -377,6 +383,9 @@ class TradingSystemRunner:
             self.repository.save_candidate_assessment(candidate)
         candidate_by_symbol = {candidate.symbol: candidate for candidate in candidates}
         sector_by_symbol = {candidate.symbol: candidate.sector for candidate in candidates}
+        source_pool_counts: dict[str, int] = {}
+        for candidate in candidates:
+            self._increment_counter(source_pool_counts, candidate.source_pool)
 
         research_decisions: list[ResearchDecision] = []
         research_bundles: list[ResearchBundle] = []
@@ -404,6 +413,21 @@ class TradingSystemRunner:
         buy_rewrite_failure_count = 0
         final_action_downgrade_count = 0
         inconsistent_buy_prevented_count = 0
+        entry_mode_counts: dict[str, int] = {}
+        promoted_buy_after_validation_count = 0
+        buy_blocked_due_to_extension_count = 0
+        buy_blocked_due_to_overheat_count = 0
+        buy_blocked_due_to_missing_pullback_confirmation_count = 0
+        buy_blocked_due_to_missing_breakout_confirmation_count = 0
+        trim_partial_count = 0
+        reduce_to_core_count = 0
+        trend_failure_exit_count = 0
+        time_stop_exit_count = 0
+        regime_exit_count = 0
+        entry_extension_ma20_samples: list[float] = []
+        entry_rsi_samples: list[float] = []
+        realized_by_exit_type: dict[str, float] = {}
+        intent_exit_type: dict[str, str] = {}
 
         shortlist, skipped_symbols, shortlist_data_coverage = self._validate_shortlist_data(shortlist, run_date)
         rejected_symbols.update(skipped_symbols)
@@ -429,16 +453,19 @@ class TradingSystemRunner:
             candidate = candidate_by_symbol.get(asset.symbol) or self._candidate_from_asset(asset, run_date)
             current_portfolio = self.broker.get_portfolio_snapshot(run_date)
             current_position = self._symbol_position(current_portfolio, asset.symbol)
+            holding_days = self.repository.get_open_position_holding_days(asset.symbol, run_date)
             decision, bundle = self.research_org.run(
                 asset.symbol,
                 run_date,
                 candidate,
                 regime,
                 current_position=current_position,
+                position_holding_days=holding_days,
             )
             self.repository.save_research_decision(decision)
             research_decisions.append(decision)
             self._increment_counter(action_counts, decision.action.value)
+            self._increment_counter(entry_mode_counts, decision.entry_mode.value)
             source_extra = decision.source_metadata.extra
             upstream_retry_count += int(source_extra.get("upstream_retry_count", 0))
             raw_failure_counts = source_extra.get("upstream_failure_counts", {})
@@ -451,6 +478,8 @@ class TradingSystemRunner:
                 fallback_origin_decision_count += 1
             if bool(source_extra.get("buy_promotion_applied")):
                 promoted_buy_count += 1
+                if decision.action.value == "buy":
+                    promoted_buy_after_validation_count += 1
             if source_extra.get("buy_promotion_source") == "debate_bull":
                 promoted_buy_from_debate_count += 1
             if bool(source_extra.get("buy_blocked_due_to_fallback")):
@@ -482,6 +511,31 @@ class TradingSystemRunner:
             if bool(source_extra.get("inconsistent_buy_prevented")):
                 inconsistent_buy_prevented_count += 1
                 self._increment_counter(block_reason_counts, "inconsistent_buy_prevented")
+            if bool(source_extra.get("buy_blocked_due_to_extension")):
+                buy_blocked_due_to_extension_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_extension")
+            if bool(source_extra.get("buy_blocked_due_to_overheat")):
+                buy_blocked_due_to_overheat_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_overheat")
+            if bool(source_extra.get("buy_blocked_due_to_missing_pullback_confirmation")):
+                buy_blocked_due_to_missing_pullback_confirmation_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_missing_pullback_confirmation")
+            if bool(source_extra.get("buy_blocked_due_to_missing_breakout_confirmation")):
+                buy_blocked_due_to_missing_breakout_confirmation_count += 1
+                self._increment_counter(block_reason_counts, "buy_blocked_missing_breakout_confirmation")
+            exit_type = source_extra.get("exit_type")
+            if isinstance(exit_type, str) and exit_type:
+                if exit_type == "trend_failure_exit":
+                    trend_failure_exit_count += 1
+                if exit_type == "time_stop_exit":
+                    time_stop_exit_count += 1
+                if exit_type == "regime_exit":
+                    regime_exit_count += 1
+            if decision.action.value == "buy":
+                extension_over_ma20 = float(decision.extension_metrics.get("extension_over_ma20", 0.0))
+                rsi14 = float(decision.extension_metrics.get("rsi14", 50.0))
+                entry_extension_ma20_samples.append(extension_over_ma20)
+                entry_rsi_samples.append(rsi14)
 
             market_bar = self.provider.get_latest_bar(asset.symbol, run_date)
             earnings_event = self.provider.get_earnings_event(asset.symbol, run_date)
@@ -535,6 +589,10 @@ class TradingSystemRunner:
             )
             self.repository.save_execution_plan(plan)
             execution_plans.append(plan)
+            if plan.intent_type in {OrderIntentType.TRIM, OrderIntentType.TRIM_PARTIAL, OrderIntentType.SCALE_OUT}:
+                trim_partial_count += 1
+            if plan.intent_type == OrderIntentType.REDUCE_TO_CORE:
+                reduce_to_core_count += 1
 
             bundle = bundle.model_copy(
                 update={
@@ -565,12 +623,19 @@ class TradingSystemRunner:
 
             intent_status = OrderStatus.PENDING if not execute else OrderStatus.NEW
             self.repository.save_order_intent(order_intent, intent_status)
+            exit_type = source_extra.get("exit_type")
+            if isinstance(exit_type, str) and exit_type:
+                intent_exit_type[order_intent.intent_id] = exit_type
 
             if execute:
                 order, fill = self.broker.submit_order(order_intent, run_date)
                 orders.append(order)
                 if fill is not None:
                     fills.append(fill)
+                    if fill.realized_pnl is not None:
+                        exit_type = intent_exit_type.get(order.intent_id)
+                        if exit_type:
+                            realized_by_exit_type[exit_type] = realized_by_exit_type.get(exit_type, 0.0) + float(fill.realized_pnl)
                 if order.status == OrderStatus.REJECTED:
                     rejected_symbols[asset.symbol] = "; ".join(order.notes)
             else:
@@ -587,6 +652,20 @@ class TradingSystemRunner:
             and len(orders) == 0
         )
         final_portfolio = self.broker.get_portfolio_snapshot(run_date)
+        average_entry_extension_metrics = {
+            "avg_extension_over_ma20": (
+                sum(entry_extension_ma20_samples) / len(entry_extension_ma20_samples)
+                if entry_extension_ma20_samples
+                else 0.0
+            ),
+            "avg_entry_rsi14": (sum(entry_rsi_samples) / len(entry_rsi_samples) if entry_rsi_samples else 0.0),
+        }
+        realized_vs_unrealized_by_exit_type: dict[str, float] = {
+            "realized_total": float(sum(fill.realized_pnl or 0.0 for fill in fills)),
+            "unrealized_total": float(final_portfolio.daily_unrealized_pnl),
+        }
+        for key, value in realized_by_exit_type.items():
+            realized_vs_unrealized_by_exit_type[f"realized_{key}"] = float(value)
         summary = DailyRunSummary(
             mode=mode,
             as_of_date=run_date,
@@ -622,6 +701,20 @@ class TradingSystemRunner:
             buy_rewrite_failure_count=buy_rewrite_failure_count,
             final_action_downgrade_count=final_action_downgrade_count,
             inconsistent_buy_prevented_count=inconsistent_buy_prevented_count,
+            entry_mode_counts=entry_mode_counts,
+            promoted_buy_after_validation_count=promoted_buy_after_validation_count,
+            buy_blocked_due_to_extension_count=buy_blocked_due_to_extension_count,
+            buy_blocked_due_to_overheat_count=buy_blocked_due_to_overheat_count,
+            buy_blocked_due_to_missing_pullback_confirmation_count=buy_blocked_due_to_missing_pullback_confirmation_count,
+            buy_blocked_due_to_missing_breakout_confirmation_count=buy_blocked_due_to_missing_breakout_confirmation_count,
+            trim_partial_count=trim_partial_count,
+            reduce_to_core_count=reduce_to_core_count,
+            trend_failure_exit_count=trend_failure_exit_count,
+            time_stop_exit_count=time_stop_exit_count,
+            regime_exit_count=regime_exit_count,
+            source_pool_counts=source_pool_counts,
+            average_entry_extension_metrics=average_entry_extension_metrics,
+            realized_vs_unrealized_by_exit_type=realized_vs_unrealized_by_exit_type,
             notes=[],
             warnings=warnings,
         )
@@ -789,6 +882,8 @@ class TradingSystemRunner:
                         regime_fit_score=candidate.regime_fit_score,
                         score=candidate.ranking_score,
                         ranking_breakdown=candidate.ranking_breakdown,
+                        source_pool=candidate.source_pool,
+                        event_strength_score=candidate.event_strength_score,
                         rejection_reasons=[] if candidate.eligible else candidate.eligibility_reasons,
                         quality_warnings=candidate.data_quality_warnings,
                         watchlist_only=candidate.watchlist_only,

@@ -65,10 +65,19 @@ class RegimeLabel(str, Enum):
     HIGH_VOLATILITY = "high_volatility"
 
 
+class EntryMode(str, Enum):
+    BREAKOUT = "breakout"
+    PULLBACK = "pullback"
+    NONE = "none"
+
+
 class OrderIntentType(str, Enum):
     NEW_ENTRY = "new_entry"
     ADD = "add"
     TRIM = "trim"
+    TRIM_PARTIAL = "trim_partial"
+    REDUCE_TO_CORE = "reduce_to_core"
+    SCALE_OUT = "scale_out"
     EXIT = "exit"
     HOLD = "hold"
     AVOID = "avoid"
@@ -151,6 +160,8 @@ class CandidateAssessment(StrictModel):
     regime_fit_score: float = 0.0
     ranking_score: float = 0.0
     ranking_breakdown: dict[str, float] = Field(default_factory=dict)
+    source_pool: str = "core_universe"
+    event_strength_score: float = 0.0
     shortlist_reason: str | None = None
     data_quality_warnings: list[str] = Field(default_factory=list)
 
@@ -304,6 +315,12 @@ class ResearchDecision(StrictModel):
     time_horizon: str
     source_metadata: SourceMetadata
     desired_position_fraction: float | None = None
+    entry_mode: EntryMode = EntryMode.NONE
+    entry_trigger_reason: str | None = None
+    extension_penalty: float = 0.0
+    overheat_penalty: float = 0.0
+    extension_metrics: dict[str, float] = Field(default_factory=dict)
+    position_lifecycle_state: OrderIntentType | None = None
 
     @field_validator("confidence")
     @classmethod
@@ -462,6 +479,20 @@ class DailyRunSummary(StrictModel):
     buy_rewrite_failure_count: int = 0
     final_action_downgrade_count: int = 0
     inconsistent_buy_prevented_count: int = 0
+    entry_mode_counts: dict[str, int] = Field(default_factory=dict)
+    promoted_buy_after_validation_count: int = 0
+    buy_blocked_due_to_extension_count: int = 0
+    buy_blocked_due_to_overheat_count: int = 0
+    buy_blocked_due_to_missing_pullback_confirmation_count: int = 0
+    buy_blocked_due_to_missing_breakout_confirmation_count: int = 0
+    trim_partial_count: int = 0
+    reduce_to_core_count: int = 0
+    trend_failure_exit_count: int = 0
+    time_stop_exit_count: int = 0
+    regime_exit_count: int = 0
+    source_pool_counts: dict[str, int] = Field(default_factory=dict)
+    average_entry_extension_metrics: dict[str, float] = Field(default_factory=dict)
+    realized_vs_unrealized_by_exit_type: dict[str, float] = Field(default_factory=dict)
     report_path: str | None = None
     notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

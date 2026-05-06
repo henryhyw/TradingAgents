@@ -47,6 +47,35 @@ Primary local system modules are under `tradingagents/system`:
 - `cloud/gcs_publisher.py`: GCS uploader
 - `cli.py`: operator CLI
 
+## Strategy V2.2 (Entry/Exit Upgrade)
+
+The strategy now uses explicit dual entry modes and lifecycle exits:
+
+- Entry modes:
+  - `breakout`: trend-confirmed range/high break
+  - `pullback`: constructive pullback + re-acceleration in trend
+- Buy gating now applies deterministic checks before orderability:
+  - liquidity/eligibility/regime gate
+  - extension + RSI overheat penalties/blocks
+  - breakout/pullback confirmation requirements
+- Position lifecycle states:
+  - `new_entry`, `add`, `hold`, `trim_partial`, `reduce_to_core`, `exit`, `avoid`
+- Exit overlays for existing longs:
+  - trend-failure exits
+  - time-stop exits
+  - regime de-risk trims/exits
+  - partial profit-taking / reduce-to-core
+- LLM role is now weighted toward synthesis and context; hard rules own entry/exit gating and sizing controls.
+
+New daily diagnostics include:
+
+- `entry_mode_counts`
+- buy blocks by extension/overheat/missing confirmation
+- trim/reduce/exit-type counters
+- source-pool counts (`core_universe`, `sector_etf`, `industry_leader`, `event_strength`)
+- average entry extension metrics
+- realized vs unrealized by exit type
+
 ## LLM Provider Migration: OpenAI -> Vertex AI Gemini
 
 Default config now uses:
@@ -223,7 +252,7 @@ This installs Python runtime, creates venv, installs project, and writes `/opt/t
 Cron behavior:
 
 - `CRON_TZ=America/New_York`
-- default schedule: `45 15 * * 1-5`
+- default schedule: `10 16 * * 1-5`
 - executes `scripts/gcp/vm_daily_run.sh`
 - wrapper is idempotent for a given market date (skips if already completed)
 

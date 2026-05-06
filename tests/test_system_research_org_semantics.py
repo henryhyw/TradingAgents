@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
+
 from tradingagents.system.config import load_settings
 from tradingagents.system.research import ResearchAdapter, ResearchOrganization
 from tradingagents.system.schemas import (
     CandidateAssessment,
+    EntryMode,
+    OrderIntentType,
+    PositionSnapshot,
     RegimeLabel,
     RegimeSnapshot,
     ResearchDecision,
@@ -61,6 +66,23 @@ class InconsistentBuyRewriteOrg(ResearchOrganization):
         if final_action == TradeAction.BUY:
             return "Avoid new entries and wait for pullback due to unfavorable risk/reward."
         return super()._synthesize_final_thesis(**kwargs)
+
+
+def _custom_history(prices: list[float], as_of: date, volume: float = 7_000_000) -> pd.DataFrame:
+    dates = pd.bdate_range(end=as_of, periods=len(prices))
+    rows = []
+    for ts, close in zip(dates, prices):
+        rows.append(
+            {
+                "Date": ts.tz_localize(None),
+                "Open": close * 0.995,
+                "High": close * 1.005,
+                "Low": close * 0.99,
+                "Close": close,
+                "Volume": volume,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _candidate(as_of: date) -> CandidateAssessment:
@@ -230,3 +252,105 @@ def test_research_org_downgrades_buy_when_rewrite_fails(monkeypatch, tmp_path):
     assert decision.source_metadata.extra.get("buy_rewrite_attempted") is True
     assert decision.source_metadata.extra.get("buy_rewrite_failure") is True
     assert decision.source_metadata.extra.get("final_action_downgraded") is True
+
+
+def test_research_org_assigns_breakout_entry_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    base = [100 + (i * 0.35) for i in range(170)]
+    prices = base + [base[-1] * 1.01, base[-1] * 1.02, base[-1] * 1.03, base[-1] * 1.035, base[-1] * 1.04]
+    history = _custom_history(prices, as_of, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD, confidence=0.72))
+
+    decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert decision.action == TradeAction.BUY
+    assert decision.entry_mode == EntryMode.BREAKOUT
+    assert "breakout" in (decision.entry_trigger_reason or "")
+
+
+def test_research_org_assigns_pullback_entry_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    trend = [100 + (i * 0.45) for i in range(150)]
+    pullback = [trend[-1] * 0.97, trend[-1] * 0.965, trend[-1] * 0.972, trend[-1] * 0.981, trend[-1] * 0.989]
+    prices = trend + pullback + [trend[-1] * 0.995, trend[-1] * 1.0, trend[-1] * 1.01, trend[-1] * 1.02, trend[-1] * 1.03]
+    history = _custom_history(prices, as_of, volume=7_500_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.BUY, confidence=0.74))
+
+    decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert decision.action == TradeAction.BUY
+    assert decision.entry_mode == EntryMode.PULLBACK
+    assert "pullback" in (decision.entry_trigger_reason or "")
+
+
+def test_research_org_blocks_overheated_breakout_buy(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    prices = [100 + (i * 0.3) for i in range(150)] + [180 + (i * 3.2) for i in range(30)]
+    history = _custom_history(prices, as_of, volume=9_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.BUY, confidence=0.82))
+
+    decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=None)
+
+    assert decision.action == TradeAction.AVOID
+    assert decision.source_metadata.extra.get("buy_blocked_due_to_overheat") is True
+    assert decision.source_metadata.extra.get("final_action_downgraded") is True
+
+
+def test_research_org_applies_trend_failure_exit_overlay(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    prices = [140 + (i * 0.4) for i in range(120)] + [185, 183, 179, 172, 166, 160, 154, 150, 147, 145]
+    history = _custom_history(prices, as_of, volume=7_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD, confidence=0.61))
+    position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=100,
+        avg_cost=130.0,
+        market_price=float(history["Close"].iloc[-1]),
+        market_value=100 * float(history["Close"].iloc[-1]),
+        cost_basis=13000.0,
+        unrealized_pnl=(float(history["Close"].iloc[-1]) - 130.0) * 100,
+    )
+
+    decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=position, position_holding_days=11)
+
+    assert decision.action == TradeAction.SELL
+    assert decision.position_lifecycle_state in {OrderIntentType.EXIT, OrderIntentType.TRIM_PARTIAL}
+    assert decision.source_metadata.extra.get("exit_type") == "trend_failure_exit"
+
+
+def test_research_org_applies_time_stop_exit(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    prices = [100 + (i * 0.08) for i in range(180)]
+    history = _custom_history(prices, as_of, volume=6_500_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD, confidence=0.58))
+    close = float(history["Close"].iloc[-1])
+    position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=120,
+        avg_cost=close * 0.995,
+        market_price=close,
+        market_value=120 * close,
+        cost_basis=120 * close * 0.995,
+        unrealized_pnl=(close - (close * 0.995)) * 120,
+    )
+
+    decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=position, position_holding_days=15)
+
+    assert decision.action == TradeAction.SELL
+    assert decision.position_lifecycle_state == OrderIntentType.EXIT
+    assert decision.source_metadata.extra.get("exit_type") == "time_stop_exit"

@@ -36,6 +36,11 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         invalidation_conditions=["invalid"],
         time_horizon="1-4 weeks",
         desired_position_fraction=0.03,
+        entry_mode="breakout",
+        entry_trigger_reason="breakout_confirmation_passed",
+        extension_penalty=0.12,
+        overheat_penalty=0.05,
+        extension_metrics={"extension_over_ma20": 0.04, "rsi14": 66.0, "breakout_distance": 0.02},
         source_metadata=SourceMetadata(
             research_adapter="unit_test",
             llm_provider="none",
@@ -130,6 +135,20 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         buy_rewrite_failure_count=0,
         final_action_downgrade_count=0,
         inconsistent_buy_prevented_count=0,
+        entry_mode_counts={"breakout": 1, "pullback": 0, "none": 0},
+        promoted_buy_after_validation_count=1,
+        buy_blocked_due_to_extension_count=0,
+        buy_blocked_due_to_overheat_count=0,
+        buy_blocked_due_to_missing_pullback_confirmation_count=0,
+        buy_blocked_due_to_missing_breakout_confirmation_count=0,
+        trim_partial_count=0,
+        reduce_to_core_count=0,
+        trend_failure_exit_count=0,
+        time_stop_exit_count=0,
+        regime_exit_count=0,
+        source_pool_counts={"industry_leader": 1},
+        average_entry_extension_metrics={"avg_extension_over_ma20": 0.04, "avg_entry_rsi14": 66.0},
+        realized_vs_unrealized_by_exit_type={"realized_total": 0.0, "unrealized_total": 0.0},
     )
     shortlist = [
         ScreenedAsset(
@@ -171,6 +190,8 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "## Diagnostics" in content
     assert "final_action=buy" in content.lower()
     assert "BUY promotion diagnostics" in content
+    assert "Entry mode diagnostics" in content
+    assert "Exit lifecycle diagnostics" in content
     assert "Consistency diagnostics" in content
     assert "Semantic guardrails" in content
     assert (tmp_path / as_of.isoformat() / "summary.json").exists()

@@ -6,6 +6,7 @@ from tradingagents.system.config import load_settings
 from tradingagents.system.data import EarningsEvent, MarketBar
 from tradingagents.system.risk import RiskEngine
 from tradingagents.system.schemas import (
+    EntryMode,
     PortfolioSnapshot,
     PositionSnapshot,
     ResearchDecision,
@@ -32,6 +33,8 @@ def _decision(action: TradeAction) -> ResearchDecision:
         invalidation_conditions=["invalidates"],
         time_horizon="1-4 weeks",
         desired_position_fraction=0.05 if action == TradeAction.BUY else 0.0,
+        entry_mode=EntryMode.BREAKOUT if action == TradeAction.BUY else EntryMode.NONE,
+        entry_trigger_reason="breakout_confirmation_passed" if action == TradeAction.BUY else None,
         source_metadata=SourceMetadata(
             research_adapter="unit_test",
             llm_provider="none",

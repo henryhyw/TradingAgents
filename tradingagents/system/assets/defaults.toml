@@ -37,6 +37,16 @@ shortlist_min_data_coverage_fraction = 0.80
 history_retry_attempts = 2
 history_retry_backoff_seconds = 0.7
 fail_live_run_on_data_impairment = true
+breakout_lookback_days = 20
+breakout_confirmation_buffer_fraction = 0.0015
+pullback_ma_short_days = 20
+pullback_ma_long_days = 50
+pullback_max_distance_fraction = 0.04
+pullback_reacceleration_min_return_3d = 0.005
+max_extension_over_ma20_fraction = 0.09
+overheat_extension_fraction = 0.14
+overheat_rsi_threshold = 78.0
+entry_confidence_min = 0.58
 regime_critical_proxies = ["SPY", "QQQ", "^VIX"]
 regime_proxies = ["SPY", "QQQ", "IWM", "XLK", "XLF", "XLI", "XLY", "XLU", "XLP", "TLT", "IEF", "UUP", "GLD", "USO", "^VIX"]
 
@@ -61,6 +71,14 @@ regime_risk_on_multiplier = 1.10
 regime_balanced_multiplier = 1.00
 regime_risk_off_multiplier = 0.70
 regime_high_vol_multiplier = 0.50
+trim_profit_trigger_fraction = 0.10
+reduce_to_core_profit_trigger_fraction = 0.18
+scale_out_fraction = 0.33
+reduce_to_core_target_fraction = 0.02
+time_stop_days = 8
+time_stop_min_progress_fraction = 0.02
+trend_failure_ma_slack_fraction = 0.0
+trend_failure_relative_strength_floor = -0.02
 
 [paper]
 starting_cash = 100000.0

@@ -29,6 +29,9 @@ class ScreenedAsset(StrictModel):
     regime_fit_score: float = 0.0
     score: float
     ranking_breakdown: dict[str, float] = Field(default_factory=dict)
+    source_pool: str = "core_universe"
+    event_strength_score: float = 0.0
+    entry_readiness_score: float = 0.0
     rejection_reasons: list[str] = Field(default_factory=list)
     quality_warnings: list[str] = Field(default_factory=list)
     watchlist_only: bool = False
@@ -121,6 +124,20 @@ class UniverseSelector:
         }
         return mapping.get(sector, "SPY")
 
+    def _source_pool(self, row: dict[str, str], style_tags: list[str], event_strength_score: float) -> str:
+        asset_type = row["asset_type"].lower()
+        sector = row["sector"].lower()
+        if "event_strength" in style_tags or "post_earnings" in style_tags or event_strength_score >= 0.82:
+            return "event_strength"
+        if asset_type == "etf":
+            broad_core = {
+                "broad market",
+                "large cap growth",
+                "small cap",
+            }
+            return "core_universe" if sector in broad_core else "sector_etf"
+        return "industry_leader"
+
     def _regime_fit_score(self, row: dict[str, str], regime: RegimeSnapshot | None) -> float:
         if regime is None:
             return 0.5
@@ -168,6 +185,7 @@ class UniverseSelector:
             history = histories.get(symbol)
             rejection_reasons: list[str] = []
             quality_warnings: list[str] = []
+            style_tags = self._split_tags(row["style_tags"])
 
             if history is None or history.empty:
                 rejection_reasons.append("missing_history")
@@ -181,7 +199,7 @@ class UniverseSelector:
                         name=row["name"],
                         asset_type=row["asset_type"],
                         sector=row["sector"],
-                        style_tags=self._split_tags(row["style_tags"]),
+                        style_tags=style_tags,
                         benchmark_symbol=self._infer_benchmark(row),
                         peer_group=row["peer_group"] or row["sector"],
                         close=0.0,
@@ -193,6 +211,9 @@ class UniverseSelector:
                         regime_fit_score=self._regime_fit_score(row, regime),
                         score=0.0,
                         ranking_breakdown={},
+                        source_pool="core_universe",
+                        event_strength_score=0.0,
+                        entry_readiness_score=0.0,
                         rejection_reasons=rejection_reasons,
                         quality_warnings=quality_warnings,
                     )
@@ -207,6 +228,30 @@ class UniverseSelector:
             volatility_20d = float(returns.tail(20).std() * (252 ** 0.5)) if len(returns) >= 20 else 0.0
             relative_strength_20d = return_20d - spy_return_20d
             regime_fit = self._regime_fit_score(row, regime)
+            ma20 = float(history["Close"].tail(20).mean()) if len(history) >= 20 else close
+            prior_high_20 = float(history["High"].iloc[-21:-1].max()) if len(history) >= 21 else close
+            extension_over_ma20 = 0.0 if ma20 <= 0 else (close / ma20) - 1.0
+            breakout_distance = 0.0 if prior_high_20 <= 0 else (close / prior_high_20) - 1.0
+            volume_surge_5d = 1.0
+            if len(history) >= 20:
+                vol_20 = float(history["Volume"].tail(20).mean())
+                vol_5 = float(history["Volume"].tail(5).mean())
+                if vol_20 > 0:
+                    volume_surge_5d = vol_5 / vol_20
+            event_strength_score = self._clamp(
+                (0.50 * max(0.0, return_20d)) + (0.25 * max(0.0, return_60d)) + (0.25 * max(0.0, volume_surge_5d - 1.0)),
+                0.0,
+                1.0,
+            )
+            source_pool = self._source_pool(row, style_tags, event_strength_score)
+            entry_readiness = self._clamp(
+                (0.45 * max(0.0, breakout_distance))
+                + (0.25 * max(0.0, relative_strength_20d))
+                + (0.20 * regime_fit)
+                + (0.10 * max(0.0, 1.0 - abs(extension_over_ma20))),
+                0.0,
+                1.0,
+            )
 
             if close < self.settings.data.min_price:
                 rejection_reasons.append("price_below_minimum")
@@ -229,7 +274,7 @@ class UniverseSelector:
                 name=row["name"],
                 asset_type=row["asset_type"],
                 sector=row["sector"],
-                style_tags=self._split_tags(row["style_tags"]),
+                style_tags=style_tags,
                 benchmark_symbol=self._infer_benchmark(row),
                 peer_group=row["peer_group"] or row["sector"],
                 close=close,
@@ -241,6 +286,9 @@ class UniverseSelector:
                 regime_fit_score=regime_fit,
                 score=0.0,
                 ranking_breakdown={},
+                source_pool=source_pool,
+                event_strength_score=event_strength_score,
+                entry_readiness_score=entry_readiness,
                 rejection_reasons=rejection_reasons,
                 quality_warnings=quality_warnings,
                 watchlist_only=watchlist_only,
@@ -256,6 +304,10 @@ class UniverseSelector:
                         "volatility_20d": volatility_20d,
                         "relative_strength_20d": relative_strength_20d,
                         "regime_fit_score": regime_fit,
+                        "volume_surge_5d": volume_surge_5d,
+                        "extension_over_ma20": extension_over_ma20,
+                        "event_strength_score": event_strength_score,
+                        "entry_readiness_score": entry_readiness,
                     }
                 )
 
@@ -269,6 +321,14 @@ class UniverseSelector:
             stability_score = 1.0 - self._rank_series(rank_frame["volatility_20d"])
             relative_strength_score = self._rank_series(rank_frame["relative_strength_20d"])
             regime_fit_score = rank_frame["regime_fit_score"].apply(self._clamp)
+            event_strength_score = self._rank_series(rank_frame["event_strength_score"])
+            entry_readiness_score = self._rank_series(rank_frame["entry_readiness_score"])
+            extension_rank = self._rank_series(rank_frame["extension_over_ma20"].clip(lower=0.0))
+            overheat_penalty = (
+                (rank_frame["extension_over_ma20"] - self.settings.data.max_extension_over_ma20_fraction).clip(lower=0.0)
+                * (0.5 + extension_rank)
+            )
+            overheat_penalty = overheat_penalty.apply(lambda value: float(self._clamp(value, 0.0, 0.35)))
 
             rank_frame["score"] = (
                 0.30 * momentum_score
@@ -276,17 +336,25 @@ class UniverseSelector:
                 + 0.15 * stability_score
                 + 0.20 * relative_strength_score
                 + 0.15 * regime_fit_score
+                + 0.08 * event_strength_score
+                + 0.07 * entry_readiness_score
+                - overheat_penalty
             )
             for asset in assets:
                 if asset.symbol not in rank_frame.index:
                     continue
                 asset.score = float(rank_frame.loc[asset.symbol, "score"])
+                asset.event_strength_score = float(rank_frame.loc[asset.symbol, "event_strength_score"])
+                asset.entry_readiness_score = float(rank_frame.loc[asset.symbol, "entry_readiness_score"])
                 asset.ranking_breakdown = {
                     "momentum": float(momentum_score[asset.symbol]),
                     "liquidity": float(liquidity_score[asset.symbol]),
                     "stability": float(stability_score[asset.symbol]),
                     "relative_strength": float(relative_strength_score[asset.symbol]),
                     "regime_fit": float(regime_fit_score[asset.symbol]),
+                    "event_strength": float(event_strength_score[asset.symbol]),
+                    "entry_readiness": float(entry_readiness_score[asset.symbol]),
+                    "overheat_penalty": float(overheat_penalty[asset.symbol]),
                 }
 
         return sorted(assets, key=lambda item: (-item.score, item.symbol))
@@ -325,7 +393,8 @@ class UniverseSelector:
             asset.shortlist_reason = (
                 f"ranked_candidate(score={asset.score:.3f}; "
                 f"momentum={asset.ranking_breakdown.get('momentum', 0.0):.2f}; "
-                f"regime_fit={asset.ranking_breakdown.get('regime_fit', 0.0):.2f})"
+                f"regime_fit={asset.ranking_breakdown.get('regime_fit', 0.0):.2f}; "
+                f"pool={asset.source_pool})"
             )
             shortlist.append(asset)
             seen.add(asset.symbol)
@@ -406,6 +475,9 @@ class UniverseSelector:
                         regime_fit_score=self._regime_fit_score(metadata, regime),
                         score=0.0,
                         ranking_breakdown={},
+                        source_pool="core_universe",
+                        event_strength_score=0.0,
+                        entry_readiness_score=0.0,
                         rejection_reasons=rejection_reasons,
                         quality_warnings=quality_warnings,
                         shortlist_reason="manual_symbol_override_missing_data",
@@ -448,6 +520,9 @@ class UniverseSelector:
                         "manual_override": 1.0 if not rejection_reasons else 0.0,
                         "relative_strength": relative_strength,
                     },
+                    source_pool=self._source_pool(metadata, self._split_tags(metadata.get("style_tags", "")), 0.0),
+                    event_strength_score=0.0,
+                    entry_readiness_score=0.5 if not rejection_reasons else 0.0,
                     rejection_reasons=rejection_reasons,
                     quality_warnings=quality_warnings,
                     shortlist_reason="manual_symbol_override",

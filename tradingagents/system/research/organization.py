@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import re
+from typing import Any
 
 import pandas as pd
 
@@ -13,6 +14,8 @@ from tradingagents.system.schemas import (
     BullCaseMemo,
     CandidateAssessment,
     DebateSummary,
+    EntryMode,
+    OrderIntentType,
     PositionSnapshot,
     RegimeSnapshot,
     ResearchBundle,
@@ -111,7 +114,8 @@ class ResearchOrganization:
 
     def _technical_memo(self, symbol: str, as_of_date: date, history: pd.DataFrame) -> AnalystMemo:
         warnings: list[str] = []
-        if history.empty or len(history) < 30:
+        technical_state = self._technical_state(history)
+        if technical_state["insufficient_history"]:
             return AnalystMemo(
                 symbol=symbol,
                 as_of_date=as_of_date,
@@ -123,18 +127,14 @@ class ResearchOrganization:
                 warnings=["insufficient_price_history"],
             )
 
-        close = float(history["Close"].iloc[-1])
-        sma_20 = float(history["Close"].tail(20).mean())
-        sma_50 = float(history["Close"].tail(50).mean()) if len(history) >= 50 else sma_20
-        ret_20 = float(history["Close"].iloc[-1] / history["Close"].iloc[-21] - 1) if len(history) > 21 else 0.0
-        ret_60 = float(history["Close"].iloc[-1] / history["Close"].iloc[-61] - 1) if len(history) > 61 else ret_20
-        vol_20 = float(history["Close"].pct_change().tail(20).std() * (252**0.5))
-        rolling_peak = float(history["Close"].tail(120).max())
-        drawdown = 0.0 if rolling_peak <= 0 else (close / rolling_peak) - 1.0
-        rsi = self._compute_rsi(history)
-        if rsi is None:
-            warnings.append("rsi_unavailable")
-            rsi = 50.0
+        close = float(technical_state["close"])
+        sma_20 = float(technical_state["sma20"])
+        sma_50 = float(technical_state["sma50"])
+        ret_20 = float(technical_state["ret_20d"])
+        ret_60 = float(technical_state["ret_60d"])
+        vol_20 = float(technical_state["vol_20d"])
+        drawdown = float(technical_state["drawdown_120d"])
+        rsi = float(technical_state["rsi14"])
 
         bullish_votes = 0
         bearish_votes = 0
@@ -171,6 +171,8 @@ class ResearchOrganization:
             "sma20_above_sma50" if sma_20 > sma_50 else "sma20_below_sma50",
             "positive_20d_return" if ret_20 > 0 else "negative_20d_return",
             "rsi_overbought" if rsi >= 70 else ("rsi_oversold" if rsi <= 30 else "rsi_neutral"),
+            "breakout_confirmed" if technical_state["breakout_confirmed"] else "breakout_unconfirmed",
+            "pullback_confirmed" if technical_state["pullback_confirmed"] else "pullback_unconfirmed",
         ]
         return AnalystMemo(
             symbol=symbol,
@@ -379,29 +381,186 @@ class ResearchOrganization:
     def _has_inventory(current_position: PositionSnapshot | None) -> bool:
         return current_position is not None and current_position.quantity > 0
 
+    def _technical_state(self, history: pd.DataFrame) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "close": 0.0,
+            "sma20": 0.0,
+            "sma50": 0.0,
+            "ret_3d": 0.0,
+            "ret_20d": 0.0,
+            "ret_60d": 0.0,
+            "vol_20d": 0.0,
+            "drawdown_120d": 0.0,
+            "rsi14": 50.0,
+            "prior_high": 0.0,
+            "extension_over_ma20": 0.0,
+            "extension_over_ma50": 0.0,
+            "breakout_distance": 0.0,
+            "pullback_distance_ma20": 1.0,
+            "pullback_distance_ma50": 1.0,
+            "volume_surge_5d": 1.0,
+            "trend_alignment": False,
+            "breakout_confirmed": False,
+            "pullback_confirmed": False,
+            "reacceleration_confirmed": False,
+            "insufficient_history": True,
+        }
+        if history.empty or len(history) < 30:
+            return state
+        close = float(history["Close"].iloc[-1])
+        sma20 = float(history["Close"].tail(20).mean())
+        sma50 = float(history["Close"].tail(50).mean()) if len(history) >= 50 else sma20
+        ret_3d = float(history["Close"].iloc[-1] / history["Close"].iloc[-4] - 1.0) if len(history) >= 4 else 0.0
+        ret_20d = float(history["Close"].iloc[-1] / history["Close"].iloc[-21] - 1.0) if len(history) > 21 else 0.0
+        ret_60d = float(history["Close"].iloc[-1] / history["Close"].iloc[-61] - 1.0) if len(history) > 61 else ret_20d
+        vol_20d = float(history["Close"].pct_change().tail(20).std() * (252 ** 0.5))
+        rolling_peak = float(history["Close"].tail(120).max())
+        drawdown = 0.0 if rolling_peak <= 0 else (close / rolling_peak) - 1.0
+        rsi = self._compute_rsi(history)
+        rsi = 50.0 if rsi is None else float(rsi)
+        prior_high = float(history["Close"].iloc[-self.settings.data.breakout_lookback_days - 1 : -1].max())
+        extension_over_ma20 = 0.0 if sma20 <= 0 else (close / sma20) - 1.0
+        extension_over_ma50 = 0.0 if sma50 <= 0 else (close / sma50) - 1.0
+        breakout_distance = 0.0 if prior_high <= 0 else (close / prior_high) - 1.0
+        pullback_distance_ma20 = 1.0 if sma20 <= 0 else abs((close / sma20) - 1.0)
+        pullback_distance_ma50 = 1.0 if sma50 <= 0 else abs((close / sma50) - 1.0)
+        vol_5 = float(history["Volume"].tail(5).mean()) if len(history) >= 5 else 0.0
+        vol_20 = float(history["Volume"].tail(20).mean()) if len(history) >= 20 else 0.0
+        volume_surge = 1.0 if vol_20 <= 0 else vol_5 / vol_20
+        trend_alignment = close > sma20 and sma20 >= (sma50 * 0.995) and ret_60d > -0.01
+        breakout_confirmed = breakout_distance >= self.settings.data.breakout_confirmation_buffer_fraction and trend_alignment
+        pullback_confirmed = (
+            trend_alignment
+            and (
+                pullback_distance_ma20 <= self.settings.data.pullback_max_distance_fraction
+                or pullback_distance_ma50 <= (self.settings.data.pullback_max_distance_fraction * 0.85)
+            )
+        )
+        reacceleration_confirmed = ret_3d >= self.settings.data.pullback_reacceleration_min_return_3d
+        return {
+            "close": close,
+            "sma20": sma20,
+            "sma50": sma50,
+            "ret_3d": ret_3d,
+            "ret_20d": ret_20d,
+            "ret_60d": ret_60d,
+            "vol_20d": vol_20d,
+            "drawdown_120d": drawdown,
+            "rsi14": rsi,
+            "prior_high": prior_high,
+            "extension_over_ma20": extension_over_ma20,
+            "extension_over_ma50": extension_over_ma50,
+            "breakout_distance": breakout_distance,
+            "pullback_distance_ma20": pullback_distance_ma20,
+            "pullback_distance_ma50": pullback_distance_ma50,
+            "volume_surge_5d": volume_surge,
+            "trend_alignment": trend_alignment,
+            "breakout_confirmed": breakout_confirmed,
+            "pullback_confirmed": pullback_confirmed,
+            "reacceleration_confirmed": reacceleration_confirmed,
+            "insufficient_history": False,
+        }
+
+    def _entry_mode_and_gates(
+        self,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+        technical_state: dict[str, Any],
+    ) -> tuple[EntryMode, str, list[str], float, float]:
+        blockers: list[str] = []
+        if technical_state.get("insufficient_history", False):
+            blockers.append("insufficient_history_for_entry_mode")
+            return EntryMode.NONE, "insufficient_history_for_entry_mode", blockers, 0.0, 0.0
+        if candidate is not None and candidate.watchlist_only:
+            blockers.append("watchlist_only_candidate")
+        if candidate is not None and not candidate.eligible:
+            blockers.append("candidate_not_eligible")
+        if candidate is not None and candidate.avg_dollar_volume_20d < self.settings.data.min_avg_dollar_volume:
+            blockers.append("liquidity_below_minimum")
+        if regime is not None and regime.label.value in {"risk_off", "high_volatility"}:
+            blockers.append(f"regime_{regime.label.value}_blocks_new_entries")
+        if technical_memo.signal != "bullish":
+            blockers.append("technical_signal_not_bullish")
+        if technical_memo.confidence < self.settings.data.entry_confidence_min:
+            blockers.append("technical_confidence_too_low")
+        if candidate is not None and candidate.relative_strength_20d <= 0:
+            blockers.append("relative_strength_not_positive")
+        if candidate is not None and candidate.return_20d <= 0:
+            blockers.append("short_term_return_not_positive")
+
+        extension_over_ma20 = float(technical_state.get("extension_over_ma20", 0.0))
+        rsi14 = float(technical_state.get("rsi14", 50.0))
+        extension_penalty = _clamp(
+            max(0.0, extension_over_ma20 - self.settings.data.max_extension_over_ma20_fraction)
+            / max(self.settings.data.max_extension_over_ma20_fraction, 1e-6),
+            0.0,
+            1.0,
+        )
+        extension_factor = _clamp(
+            extension_over_ma20 / max(self.settings.data.max_extension_over_ma20_fraction, 1e-6),
+            0.0,
+            1.0,
+        )
+        overheat_penalty = _clamp(
+            (max(0.0, rsi14 - self.settings.data.overheat_rsi_threshold) / 20.0) * extension_factor
+            + (max(0.0, extension_over_ma20 - self.settings.data.overheat_extension_fraction) / 0.10),
+            0.0,
+            1.0,
+        )
+        if extension_over_ma20 > self.settings.data.overheat_extension_fraction:
+            blockers.append("extension_overheat_block")
+        if (
+            rsi14 > self.settings.data.overheat_rsi_threshold
+            and extension_over_ma20 > (self.settings.data.max_extension_over_ma20_fraction * 0.85)
+        ):
+            blockers.append("rsi_overheat_block")
+
+        breakout_confirmed = bool(technical_state.get("breakout_confirmed", False))
+        pullback_confirmed = bool(technical_state.get("pullback_confirmed", False))
+        reacceleration_confirmed = bool(technical_state.get("reacceleration_confirmed", False))
+        breakout_mode_ok = breakout_confirmed
+        pullback_mode_ok = pullback_confirmed and reacceleration_confirmed
+
+        if regime is not None and regime.label.value == "balanced":
+            # Balanced regime prefers pullback entries unless breakout quality is exceptional.
+            breakout_distance = float(technical_state.get("breakout_distance", 0.0))
+            breakout_mode_ok = breakout_mode_ok and breakout_distance >= 0.015 and rsi14 < 76.0
+
+        if blockers:
+            if not breakout_mode_ok:
+                blockers.append("missing_breakout_confirmation")
+            if not pullback_mode_ok:
+                blockers.append("missing_pullback_confirmation")
+            return EntryMode.NONE, blockers[0], list(dict.fromkeys(blockers)), extension_penalty, overheat_penalty
+        if pullback_mode_ok:
+            pullback_distance_ma20 = float(technical_state.get("pullback_distance_ma20", 1.0))
+            breakout_distance = float(technical_state.get("breakout_distance", 0.0))
+            if pullback_distance_ma20 <= self.settings.data.pullback_max_distance_fraction and breakout_distance < 0.04:
+                return EntryMode.PULLBACK, "pullback_confirmation_passed", [], extension_penalty, overheat_penalty
+        if breakout_mode_ok:
+            return EntryMode.BREAKOUT, "breakout_confirmation_passed", [], extension_penalty, overheat_penalty
+        if pullback_mode_ok:
+            return EntryMode.PULLBACK, "pullback_confirmation_passed", [], extension_penalty, overheat_penalty
+        blockers.extend(["missing_breakout_confirmation", "missing_pullback_confirmation"])
+        return EntryMode.NONE, "entry_confirmation_missing", blockers, extension_penalty, overheat_penalty
+
     def _entry_gate_satisfied(
         self,
         candidate: CandidateAssessment | None,
         regime: RegimeSnapshot | None,
         technical_memo: AnalystMemo,
+        technical_state: dict[str, Any],
     ) -> tuple[bool, str]:
-        if candidate is not None and candidate.watchlist_only:
-            return False, "watchlist_only_candidate"
-        if candidate is not None and not candidate.eligible:
-            return False, "candidate_not_eligible"
-        if candidate is not None and candidate.avg_dollar_volume_20d < self.settings.data.min_avg_dollar_volume:
-            return False, "liquidity_below_minimum"
-        if regime is not None and regime.label.value not in {"risk_on", "balanced"}:
-            return False, f"regime_{regime.label.value}_not_entry_favorable"
-        if technical_memo.signal != "bullish":
-            return False, "technical_signal_not_bullish"
-        if technical_memo.confidence < 0.55:
-            return False, "technical_confidence_too_low"
-        if candidate is not None and candidate.relative_strength_20d <= 0:
-            return False, "relative_strength_not_positive"
-        if candidate is not None and candidate.return_20d <= 0:
-            return False, "short_term_return_not_positive"
-        return True, "entry_gate_passed"
+        entry_mode, reason, _, _, _ = self._entry_mode_and_gates(
+            candidate=candidate,
+            regime=regime,
+            technical_memo=technical_memo,
+            technical_state=technical_state,
+        )
+        if entry_mode == EntryMode.NONE:
+            return False, reason
+        return True, reason
 
     @staticmethod
     def _thesis_semantics(thesis: str) -> dict[str, int | bool]:
@@ -471,6 +630,7 @@ class ResearchOrganization:
         candidate: CandidateAssessment | None,
         regime: RegimeSnapshot | None,
         technical_memo: AnalystMemo,
+        technical_state: dict[str, Any],
         debate: DebateSummary,
     ) -> tuple[bool, str]:
         is_fallback_origin, _ = self._is_fallback_origin(decision)
@@ -478,17 +638,19 @@ class ResearchOrganization:
             return False, "fallback_origin_non_promotable"
         if any(flag.lower() == "insufficient_research_confidence" for flag in decision.risk_flags):
             return False, "insufficient_research_confidence"
-        if decision.confidence < 0.55:
+        if decision.confidence < self.settings.data.entry_confidence_min:
             return False, "decision_confidence_below_threshold"
         if debate.confidence_balance < 0.58:
             return False, "debate_balance_below_threshold"
         inconsistent_phrases = self._find_buy_inconsistent_phrases(decision.thesis)
         if inconsistent_phrases:
             return False, f"thesis_inconsistent:{inconsistent_phrases[0]}"
-        entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo)
+        if "avoid" in decision.thesis.lower() or "no entry" in decision.thesis.lower():
+            return False, "thesis_contains_no_entry_language"
+        entry_ok, entry_reason = self._entry_gate_satisfied(candidate, regime, technical_memo, technical_state)
         if not entry_ok:
             return False, entry_reason
-        return True, "entry_gate_passed"
+        return True, entry_reason
 
     @staticmethod
     def _fallback_label(decision: ResearchDecision) -> str:
@@ -503,6 +665,106 @@ class ResearchOrganization:
                 return failure_type
         return "upstream_failure"
 
+    @staticmethod
+    def _current_unrealized_return(current_position: PositionSnapshot | None) -> float:
+        if current_position is None or current_position.quantity <= 0 or current_position.avg_cost <= 0:
+            return 0.0
+        return (current_position.market_price / current_position.avg_cost) - 1.0
+
+    def _inventory_lifecycle_overlay(
+        self,
+        *,
+        current_position: PositionSnapshot | None,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_state: dict[str, Any],
+        holding_days: int | None,
+    ) -> dict[str, Any] | None:
+        if current_position is None or current_position.quantity <= 0:
+            return None
+        close = float(technical_state.get("close", 0.0))
+        sma20 = float(technical_state.get("sma20", 0.0))
+        sma50 = float(technical_state.get("sma50", 0.0))
+        extension = float(technical_state.get("extension_over_ma20", 0.0))
+        rsi14 = float(technical_state.get("rsi14", 50.0))
+        trend_alignment = bool(technical_state.get("trend_alignment", False))
+        unrealized_return = self._current_unrealized_return(current_position)
+        rel_strength = 0.0 if candidate is None else candidate.relative_strength_20d
+        regime_label = None if regime is None else regime.label.value
+
+        trend_failure = (
+            close < (sma20 * (1.0 - self.settings.risk.trend_failure_ma_slack_fraction))
+            and (sma20 < sma50 or rel_strength <= self.settings.risk.trend_failure_relative_strength_floor)
+        )
+        if trend_failure:
+            if regime_label == "risk_on" and unrealized_return > self.settings.risk.trim_profit_trigger_fraction:
+                return {
+                    "action": TradeAction.SELL,
+                    "lifecycle": OrderIntentType.TRIM_PARTIAL,
+                    "reason": "trend_failure_trim_winner",
+                    "target_fraction": None,
+                    "exit_type": "trend_failure_exit",
+                }
+            return {
+                "action": TradeAction.SELL,
+                "lifecycle": OrderIntentType.EXIT,
+                "reason": "trend_failure_exit",
+                "target_fraction": 0.0,
+                "exit_type": "trend_failure_exit",
+            }
+
+        if (
+            holding_days is not None
+            and holding_days >= self.settings.risk.time_stop_days
+            and unrealized_return < self.settings.risk.time_stop_min_progress_fraction
+        ):
+            return {
+                "action": TradeAction.SELL,
+                "lifecycle": OrderIntentType.EXIT,
+                "reason": "time_stop_exit",
+                "target_fraction": 0.0,
+                "exit_type": "time_stop_exit",
+            }
+
+        if regime_label in {"risk_off", "high_volatility"}:
+            if unrealized_return >= self.settings.risk.trim_profit_trigger_fraction and trend_alignment:
+                return {
+                    "action": TradeAction.SELL,
+                    "lifecycle": OrderIntentType.TRIM_PARTIAL,
+                    "reason": "regime_de_risk_trim",
+                    "target_fraction": None,
+                    "exit_type": "regime_exit",
+                }
+            if close < sma20:
+                return {
+                    "action": TradeAction.SELL,
+                    "lifecycle": OrderIntentType.EXIT,
+                    "reason": "regime_de_risk_exit",
+                    "target_fraction": 0.0,
+                    "exit_type": "regime_exit",
+                }
+
+        if (
+            unrealized_return >= self.settings.risk.reduce_to_core_profit_trigger_fraction
+            and (extension >= self.settings.data.max_extension_over_ma20_fraction or rsi14 >= self.settings.data.overheat_rsi_threshold)
+        ):
+            return {
+                "action": TradeAction.SELL,
+                "lifecycle": OrderIntentType.REDUCE_TO_CORE,
+                "reason": "take_profit_reduce_to_core",
+                "target_fraction": self.settings.risk.reduce_to_core_target_fraction,
+                "exit_type": "take_profit_reduce_to_core",
+            }
+        if unrealized_return >= self.settings.risk.trim_profit_trigger_fraction and extension >= self.settings.data.max_extension_over_ma20_fraction:
+            return {
+                "action": TradeAction.SELL,
+                "lifecycle": OrderIntentType.TRIM_PARTIAL,
+                "reason": "take_profit_trim_partial",
+                "target_fraction": None,
+                "exit_type": "take_profit_trim_partial",
+            }
+        return None
+
     def _synthesize_final_thesis(
         self,
         *,
@@ -515,6 +777,10 @@ class ResearchOrganization:
         fallback_origin: bool,
     ) -> str:
         if final_action == TradeAction.BUY:
+            entry_mode = decision.entry_mode.value if hasattr(decision, "entry_mode") else "none"
+            entry_reason = decision.entry_trigger_reason or "entry_confirmation_passed"
+            extension = decision.extension_metrics.get("extension_over_ma20", 0.0)
+            rsi = decision.extension_metrics.get("rsi14", 50.0)
             regime_text = "Regime context is favorable for selective long entries."
             if regime is not None:
                 regime_text = (
@@ -530,6 +796,7 @@ class ResearchOrganization:
             return (
                 "Entry rationale: initiate a long position because cross-checks are supportive now. "
                 f"{regime_text} {candidate_text} "
+                f"Entry mode={entry_mode} ({entry_reason}), extension_over_ma20={extension:.2%}, RSI14={rsi:.1f}. "
                 f"Technical evidence: {technical_memo.summary} "
                 f"Decision confidence is {decision.confidence:.2f}; position sizing remains risk-constrained."
             )
@@ -550,9 +817,13 @@ class ResearchOrganization:
                 "under long-only constraints."
             )
         if final_action == TradeAction.SELL:
+            lifecycle_state = decision.position_lifecycle_state
+            lifecycle_label = "exit" if lifecycle_state is None else lifecycle_state.value
+            exit_type = str(decision.source_metadata.extra.get("exit_type", "risk_reduction"))
             return (
                 "Exit rationale: existing long inventory should be reduced or closed due to deteriorating "
-                "risk/reward versus current portfolio constraints."
+                "risk/reward versus current portfolio constraints. "
+                f"Lifecycle={lifecycle_label}; exit_type={exit_type}."
             )
         if has_inventory:
             return "Hold rationale: maintain the existing long position while waiting for clearer directional evidence."
@@ -573,6 +844,8 @@ class ResearchOrganization:
         regime: RegimeSnapshot | None,
         technical_memo: AnalystMemo,
         current_position: PositionSnapshot | None,
+        technical_state: dict[str, Any],
+        position_holding_days: int | None = None,
     ) -> tuple[ResearchDecision, DebateSummary]:
         has_inventory = self._has_inventory(current_position)
         original_action = decision.action
@@ -591,20 +864,62 @@ class ResearchOrganization:
         buy_rewrite_failure = False
         final_action_downgraded = False
         inconsistent_buy_prevented = False
+        buy_blocked_due_to_extension = False
+        buy_blocked_due_to_overheat = False
+        buy_blocked_due_to_missing_pullback_confirmation = False
+        buy_blocked_due_to_missing_breakout_confirmation = False
+        lifecycle_overlay_applied = False
+        lifecycle_state: OrderIntentType | None = decision.position_lifecycle_state
+        lifecycle_target_fraction: float | None = None
 
         fallback_origin, fallback_reason = self._is_fallback_origin(decision)
+        entry_mode, entry_reason, entry_blockers, extension_penalty, overheat_penalty = self._entry_mode_and_gates(
+            candidate=candidate,
+            regime=regime,
+            technical_memo=technical_memo,
+            technical_state=technical_state,
+        )
+        if "extension_overheat_block" in entry_blockers:
+            buy_blocked_due_to_extension = True
+        if "rsi_overheat_block" in entry_blockers:
+            buy_blocked_due_to_overheat = True
+        if "missing_pullback_confirmation" in entry_blockers:
+            buy_blocked_due_to_missing_pullback_confirmation = True
+        if "missing_breakout_confirmation" in entry_blockers:
+            buy_blocked_due_to_missing_breakout_confirmation = True
+
+        inventory_overlay = self._inventory_lifecycle_overlay(
+            current_position=current_position,
+            candidate=candidate,
+            regime=regime,
+            technical_state=technical_state,
+            holding_days=position_holding_days,
+        )
+        if inventory_overlay is not None:
+            lifecycle_overlay_applied = True
+            lifecycle_state = inventory_overlay["lifecycle"]
+            lifecycle_target_fraction = inventory_overlay["target_fraction"]
+            if inventory_overlay["action"] == TradeAction.SELL and final_action != TradeAction.SELL:
+                final_action = TradeAction.SELL
+                final_action_changed = True
+                override_reasons.append(f"inventory_lifecycle_overlay:{inventory_overlay['reason']}")
 
         if final_action == TradeAction.SELL and not has_inventory:
             final_action = TradeAction.AVOID
             final_action_changed = True
             override_reasons.append("sell_recast_to_avoid_no_inventory")
 
-        if debate.winning_side == "bull" and final_action in {TradeAction.SELL, TradeAction.HOLD, TradeAction.AVOID}:
+        if (
+            debate.winning_side == "bull"
+            and final_action in {TradeAction.SELL, TradeAction.HOLD, TradeAction.AVOID}
+            and not has_inventory
+        ):
             entry_ok, entry_reason = self._buy_promotion_gate(
                 decision=decision,
                 candidate=candidate,
                 regime=regime,
                 technical_memo=technical_memo,
+                technical_state=technical_state,
                 debate=debate,
             )
             if entry_ok:
@@ -624,6 +939,14 @@ class ResearchOrganization:
                 if entry_reason == "insufficient_research_confidence":
                     buy_blocked_due_to_fallback = True
                     inconsistent_buy_prevented = True
+                if entry_reason in {"extension_overheat_block", "max_extension_exceeded"}:
+                    buy_blocked_due_to_extension = True
+                if entry_reason == "rsi_overheat_block":
+                    buy_blocked_due_to_overheat = True
+                if entry_reason == "missing_pullback_confirmation":
+                    buy_blocked_due_to_missing_pullback_confirmation = True
+                if entry_reason == "missing_breakout_confirmation":
+                    buy_blocked_due_to_missing_breakout_confirmation = True
 
         if final_action == TradeAction.BUY and fallback_origin:
             final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
@@ -635,12 +958,49 @@ class ResearchOrganization:
             inconsistent_buy_prevented = True
             override_reasons.append(f"buy_blocked_fallback_origin:{fallback_reason or 'unknown'}")
 
+        if final_action == TradeAction.BUY and entry_mode == EntryMode.NONE:
+            final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
+            final_action_changed = True
+            consistency_enforcement_changed_action = True
+            final_action_downgraded = True
+            inconsistent_buy_prevented = True
+            if buy_blocked_due_to_extension:
+                override_reasons.append("buy_blocked_extension")
+            if buy_blocked_due_to_overheat:
+                override_reasons.append("buy_blocked_overheat")
+            if buy_blocked_due_to_missing_pullback_confirmation:
+                override_reasons.append("buy_blocked_missing_pullback_confirmation")
+            if buy_blocked_due_to_missing_breakout_confirmation:
+                override_reasons.append("buy_blocked_missing_breakout_confirmation")
+            if not (
+                buy_blocked_due_to_extension
+                or buy_blocked_due_to_overheat
+                or buy_blocked_due_to_missing_pullback_confirmation
+                or buy_blocked_due_to_missing_breakout_confirmation
+            ):
+                override_reasons.append(f"buy_blocked_entry_gate:{entry_reason}")
+
         thesis_semantics = self._thesis_semantics(decision.thesis)
         if final_action == TradeAction.BUY:
             buy_rewrite_attempted = True
+            draft_buy_decision = decision.model_copy(
+                update={
+                    "entry_mode": entry_mode,
+                    "entry_trigger_reason": entry_reason,
+                    "extension_penalty": extension_penalty,
+                    "overheat_penalty": overheat_penalty,
+                    "extension_metrics": {
+                        "extension_over_ma20": float(technical_state.get("extension_over_ma20", 0.0)),
+                        "extension_over_ma50": float(technical_state.get("extension_over_ma50", 0.0)),
+                        "rsi14": float(technical_state.get("rsi14", 50.0)),
+                        "breakout_distance": float(technical_state.get("breakout_distance", 0.0)),
+                        "pullback_distance_ma20": float(technical_state.get("pullback_distance_ma20", 1.0)),
+                    },
+                }
+            )
             buy_thesis_candidate = self._synthesize_final_thesis(
                 final_action=TradeAction.BUY,
-                decision=decision,
+                decision=draft_buy_decision,
                 candidate=candidate,
                 regime=regime,
                 technical_memo=technical_memo,
@@ -681,13 +1041,42 @@ class ResearchOrganization:
 
         desired_position_fraction = decision.desired_position_fraction
         if final_action != TradeAction.BUY:
-            desired_position_fraction = 0.0
+            if final_action == TradeAction.SELL and lifecycle_state == OrderIntentType.REDUCE_TO_CORE:
+                desired_position_fraction = self.settings.risk.reduce_to_core_target_fraction
+            elif lifecycle_target_fraction is not None:
+                desired_position_fraction = lifecycle_target_fraction
+            else:
+                desired_position_fraction = 0.0
         elif desired_position_fraction is None or desired_position_fraction <= 0:
             desired_position_fraction = min(0.04, self.settings.risk.max_position_size_fraction)
+        if final_action == TradeAction.BUY:
+            if entry_mode == EntryMode.BREAKOUT and regime is not None and regime.label.value == "balanced":
+                desired_position_fraction *= 0.75
+            if entry_mode == EntryMode.PULLBACK and regime is not None and regime.label.value == "risk_on":
+                desired_position_fraction *= 1.05
+            penalty_scale = _clamp(1.0 - (0.35 * extension_penalty) - (0.45 * overheat_penalty), 0.35, 1.0)
+            desired_position_fraction *= penalty_scale
+            desired_position_fraction = _clamp(desired_position_fraction, 0.0, self.settings.risk.max_position_size_fraction)
 
+        synthesis_decision = decision.model_copy(
+            update={
+                "entry_mode": entry_mode,
+                "entry_trigger_reason": entry_reason,
+                "extension_penalty": extension_penalty,
+                "overheat_penalty": overheat_penalty,
+                "extension_metrics": {
+                    "extension_over_ma20": float(technical_state.get("extension_over_ma20", 0.0)),
+                    "extension_over_ma50": float(technical_state.get("extension_over_ma50", 0.0)),
+                    "rsi14": float(technical_state.get("rsi14", 50.0)),
+                    "breakout_distance": float(technical_state.get("breakout_distance", 0.0)),
+                    "pullback_distance_ma20": float(technical_state.get("pullback_distance_ma20", 1.0)),
+                },
+                "position_lifecycle_state": lifecycle_state,
+            }
+        )
         synthesized_thesis = self._synthesize_final_thesis(
             final_action=final_action,
-            decision=decision,
+            decision=synthesis_decision,
             candidate=candidate,
             regime=regime,
             technical_memo=technical_memo,
@@ -715,6 +1104,21 @@ class ResearchOrganization:
                 "buy_rewrite_failure": buy_rewrite_failure,
                 "final_action_downgraded": final_action_downgraded,
                 "inconsistent_buy_prevented": inconsistent_buy_prevented,
+                "buy_blocked_due_to_extension": buy_blocked_due_to_extension,
+                "buy_blocked_due_to_overheat": buy_blocked_due_to_overheat,
+                "buy_blocked_due_to_missing_pullback_confirmation": buy_blocked_due_to_missing_pullback_confirmation,
+                "buy_blocked_due_to_missing_breakout_confirmation": buy_blocked_due_to_missing_breakout_confirmation,
+                "entry_mode": entry_mode.value,
+                "entry_trigger_reason": entry_reason,
+                "entry_blockers": entry_blockers,
+                "entry_mode_confirmed": entry_mode != EntryMode.NONE,
+                "extension_penalty": extension_penalty,
+                "overheat_penalty": overheat_penalty,
+                "extension_metrics": synthesis_decision.extension_metrics,
+                "lifecycle_overlay_applied": lifecycle_overlay_applied,
+                "position_lifecycle_state": None if lifecycle_state is None else lifecycle_state.value,
+                "position_holding_days": position_holding_days,
+                "exit_type": None if inventory_overlay is None else inventory_overlay.get("exit_type"),
                 "final_thesis_rewritten": thesis_rewritten,
                 "thesis_semantics": thesis_semantics,
                 "final_action": final_action.value,
@@ -727,6 +1131,18 @@ class ResearchOrganization:
                 + ([f"action_override:{override_reason}"] if override_reason else [])
                 + (["buy_blocked_due_to_fallback"] if buy_blocked_due_to_fallback else [])
                 + (["buy_blocked_due_to_thesis_inconsistency"] if buy_blocked_due_to_thesis_inconsistency else [])
+                + (["buy_blocked_due_to_extension"] if buy_blocked_due_to_extension else [])
+                + (["buy_blocked_due_to_overheat"] if buy_blocked_due_to_overheat else [])
+                + (
+                    ["buy_blocked_due_to_missing_pullback_confirmation"]
+                    if buy_blocked_due_to_missing_pullback_confirmation
+                    else []
+                )
+                + (
+                    ["buy_blocked_due_to_missing_breakout_confirmation"]
+                    if buy_blocked_due_to_missing_breakout_confirmation
+                    else []
+                )
                 + (["action_thesis_mismatch_detected"] if action_thesis_mismatch_detected else [])
             )
         )
@@ -734,6 +1150,12 @@ class ResearchOrganization:
             update={
                 "action": final_action,
                 "desired_position_fraction": desired_position_fraction,
+                "entry_mode": entry_mode,
+                "entry_trigger_reason": entry_reason,
+                "extension_penalty": extension_penalty,
+                "overheat_penalty": overheat_penalty,
+                "extension_metrics": synthesis_decision.extension_metrics,
+                "position_lifecycle_state": lifecycle_state,
                 "risk_flags": updated_risk_flags,
                 "thesis": synthesized_thesis,
                 "source_metadata": decision.source_metadata.model_copy(update={"extra": updated_source_extra}),
@@ -835,9 +1257,11 @@ class ResearchOrganization:
         candidate: CandidateAssessment | None,
         regime: RegimeSnapshot | None,
         current_position: PositionSnapshot | None = None,
+        position_holding_days: int | None = None,
     ) -> tuple[ResearchDecision, ResearchBundle]:
         decision = self.adapter.research(symbol, as_of_date)
         history = self.provider.get_history(symbol, as_of_date, self.settings.data.history_lookback_days)
+        technical_state = self._technical_state(history)
         fundamentals = self.provider.get_fundamentals(symbol)
         news_items = self.provider.get_news(symbol, as_of_date, self.settings.data.max_news_items)
 
@@ -868,6 +1292,8 @@ class ResearchOrganization:
             regime=regime,
             technical_memo=technical_memo,
             current_position=current_position,
+            technical_state=technical_state,
+            position_holding_days=position_holding_days,
         )
         memos.append(
             AnalystMemo(
@@ -917,7 +1343,16 @@ class ResearchOrganization:
                 ),
                 confidence=decision.confidence,
                 summary=decision.thesis[:600],
-                evidence=[f"upstream_action={decision.action.value}", f"time_horizon={decision.time_horizon}"],
+                evidence=[
+                    f"resolved_action={decision.action.value}",
+                    f"time_horizon={decision.time_horizon}",
+                    f"entry_mode={decision.entry_mode.value}",
+                    (
+                        "lifecycle_state=none"
+                        if decision.position_lifecycle_state is None
+                        else f"lifecycle_state={decision.position_lifecycle_state.value}"
+                    ),
+                ],
                 warnings=[],
             )
         )

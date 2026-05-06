@@ -66,6 +66,21 @@ class RiskEngine:
         elif decision.action == TradeAction.BUY and market_bar.close < self.settings.data.min_price:
             reasons.append("price_below_minimum")
 
+        if decision.action == TradeAction.BUY:
+            risk_checks["entry_mode"] = decision.entry_mode.value
+            risk_checks["entry_trigger_reason"] = decision.entry_trigger_reason or "n/a"
+            risk_checks["extension_penalty"] = decision.extension_penalty
+            risk_checks["overheat_penalty"] = decision.overheat_penalty
+            source_extra = decision.source_metadata.extra
+            if bool(source_extra.get("fallback_origin")):
+                reasons.append("fallback_origin_non_tradable")
+            if decision.entry_mode.value == "none":
+                reasons.append("entry_mode_unconfirmed")
+            if decision.extension_penalty >= 0.75:
+                reasons.append("entry_extension_too_high")
+            if decision.overheat_penalty >= 0.75:
+                reasons.append("entry_overheat_too_high")
+
         if decision.action == TradeAction.BUY and avg_dollar_volume_20d < self.settings.data.min_avg_dollar_volume:
             reasons.append("liquidity_below_minimum")
 
@@ -129,6 +144,8 @@ class RiskEngine:
             )
 
         if decision.action == TradeAction.SELL:
+            lifecycle_state = decision.position_lifecycle_state.value if decision.position_lifecycle_state is not None else "exit"
+            exit_type = str(decision.source_metadata.extra.get("exit_type", "inventory_reduction"))
             return RiskDecision(
                 source_decision_id=decision.decision_id,
                 symbol=decision.symbol,
@@ -138,7 +155,7 @@ class RiskEngine:
                 proposed_size_fraction=0.0,
                 rejection_reason=None,
                 execution_constraints=constraints,
-                committee_notes=committee_notes + ["Sell decision approved for inventory reduction."],
+                committee_notes=committee_notes + [f"Sell decision approved: lifecycle={lifecycle_state}, exit_type={exit_type}."],
                 risk_checks=risk_checks,
                 warnings=warnings,
             )
@@ -164,6 +181,8 @@ class RiskEngine:
         risk_checks["raw_target_fraction"] = raw_target
 
         regime_multiplier = 1.0 if regime is None else regime.risk_budget_multiplier
+        if regime is not None and regime.label.value == "balanced":
+            regime_multiplier *= 0.9
         volatility = self.settings.risk.volatility_target_annual
         if candidate is not None and candidate.volatility_20d > 0:
             volatility = candidate.volatility_20d

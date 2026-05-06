@@ -65,6 +65,16 @@ class DataSettings(BaseSettingsModel):
     history_retry_attempts: PositiveInt = 2
     history_retry_backoff_seconds: float = 0.7
     fail_live_run_on_data_impairment: bool = True
+    breakout_lookback_days: PositiveInt = 20
+    breakout_confirmation_buffer_fraction: float = 0.0015
+    pullback_ma_short_days: PositiveInt = 20
+    pullback_ma_long_days: PositiveInt = 50
+    pullback_max_distance_fraction: float = 0.04
+    pullback_reacceleration_min_return_3d: float = 0.005
+    max_extension_over_ma20_fraction: float = 0.09
+    overheat_extension_fraction: float = 0.14
+    overheat_rsi_threshold: float = 78.0
+    entry_confidence_min: float = 0.58
     regime_critical_proxies: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "^VIX"])
     regime_proxies: list[str] = Field(
         default_factory=lambda: [
@@ -108,6 +118,14 @@ class RiskSettings(BaseSettingsModel):
     regime_balanced_multiplier: float = 1.00
     regime_risk_off_multiplier: float = 0.70
     regime_high_vol_multiplier: float = 0.50
+    trim_profit_trigger_fraction: float = 0.10
+    reduce_to_core_profit_trigger_fraction: float = 0.18
+    scale_out_fraction: float = 0.33
+    reduce_to_core_target_fraction: float = 0.02
+    time_stop_days: PositiveInt = 8
+    time_stop_min_progress_fraction: float = 0.02
+    trend_failure_ma_slack_fraction: float = 0.0
+    trend_failure_relative_strength_floor: float = -0.02
 
 
 class PaperSettings(BaseSettingsModel):
@@ -333,6 +351,16 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "history_retry_attempts": _env_int("TRADINGAGENTS_HISTORY_RETRY_ATTEMPTS"),
             "history_retry_backoff_seconds": _env_float("TRADINGAGENTS_HISTORY_RETRY_BACKOFF_SECONDS"),
             "fail_live_run_on_data_impairment": _env_bool("TRADINGAGENTS_FAIL_LIVE_RUN_ON_DATA_IMPAIRMENT"),
+            "breakout_lookback_days": _env_int("TRADINGAGENTS_BREAKOUT_LOOKBACK_DAYS"),
+            "breakout_confirmation_buffer_fraction": _env_float("TRADINGAGENTS_BREAKOUT_CONFIRMATION_BUFFER"),
+            "pullback_ma_short_days": _env_int("TRADINGAGENTS_PULLBACK_MA_SHORT_DAYS"),
+            "pullback_ma_long_days": _env_int("TRADINGAGENTS_PULLBACK_MA_LONG_DAYS"),
+            "pullback_max_distance_fraction": _env_float("TRADINGAGENTS_PULLBACK_MAX_DISTANCE"),
+            "pullback_reacceleration_min_return_3d": _env_float("TRADINGAGENTS_PULLBACK_REACCELERATION_MIN_RETURN_3D"),
+            "max_extension_over_ma20_fraction": _env_float("TRADINGAGENTS_MAX_EXTENSION_OVER_MA20"),
+            "overheat_extension_fraction": _env_float("TRADINGAGENTS_OVERHEAT_EXTENSION"),
+            "overheat_rsi_threshold": _env_float("TRADINGAGENTS_OVERHEAT_RSI_THRESHOLD"),
+            "entry_confidence_min": _env_float("TRADINGAGENTS_ENTRY_CONFIDENCE_MIN"),
         },
         "risk": {
             "max_position_size_fraction": _env_float("TRADINGAGENTS_MAX_POSITION_SIZE"),
@@ -343,6 +371,14 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "max_sector_exposure_fraction": _env_float("TRADINGAGENTS_MAX_SECTOR_EXPOSURE"),
             "correlation_threshold": _env_float("TRADINGAGENTS_CORRELATION_THRESHOLD"),
             "volatility_target_annual": _env_float("TRADINGAGENTS_VOL_TARGET"),
+            "trim_profit_trigger_fraction": _env_float("TRADINGAGENTS_TRIM_PROFIT_TRIGGER"),
+            "reduce_to_core_profit_trigger_fraction": _env_float("TRADINGAGENTS_REDUCE_TO_CORE_PROFIT_TRIGGER"),
+            "scale_out_fraction": _env_float("TRADINGAGENTS_SCALE_OUT_FRACTION"),
+            "reduce_to_core_target_fraction": _env_float("TRADINGAGENTS_REDUCE_TO_CORE_TARGET"),
+            "time_stop_days": _env_int("TRADINGAGENTS_TIME_STOP_DAYS"),
+            "time_stop_min_progress_fraction": _env_float("TRADINGAGENTS_TIME_STOP_MIN_PROGRESS"),
+            "trend_failure_ma_slack_fraction": _env_float("TRADINGAGENTS_TREND_FAILURE_MA_SLACK"),
+            "trend_failure_relative_strength_floor": _env_float("TRADINGAGENTS_TREND_FAILURE_RS_FLOOR"),
         },
         "paper": {
             "starting_cash": _env_float("TRADINGAGENTS_STARTING_CASH"),

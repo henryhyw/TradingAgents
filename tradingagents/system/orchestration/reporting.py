@@ -109,7 +109,8 @@ def generate_daily_report(
             status = "watchlist" if candidate.watchlist_only else ("eligible" if candidate.eligible else "rejected")
             lines.append(
                 f"- {candidate.symbol}: {status}, score={candidate.ranking_score:.3f}, "
-                f"rel_strength20={candidate.relative_strength_20d:.2%}, regime_fit={candidate.regime_fit_score:.2f}"
+                f"rel_strength20={candidate.relative_strength_20d:.2%}, regime_fit={candidate.regime_fit_score:.2f}, "
+                f"pool={candidate.source_pool}, event_strength={candidate.event_strength_score:.2f}"
             )
 
     _section(lines, "Shortlist")
@@ -117,7 +118,8 @@ def generate_daily_report(
         lines.append(
             f"- {asset.symbol}: score={asset.score:.3f}, close=${asset.close:.2f}, "
             f"20d={asset.return_20d:.2%}, 60d={asset.return_60d:.2%}, "
-            f"ADV20=${asset.avg_dollar_volume_20d:,.0f}, reason={asset.shortlist_reason or 'n/a'}"
+            f"ADV20=${asset.avg_dollar_volume_20d:,.0f}, pool={asset.source_pool}, "
+            f"reason={asset.shortlist_reason or 'n/a'}"
         )
 
     _section(lines, "Research & Debate")
@@ -126,8 +128,22 @@ def generate_daily_report(
         lines.append(
             f"- {decision.symbol}: {decision.action.value.upper()} ({decision.confidence:.2f}) horizon={decision.time_horizon}"
         )
+        lines.append(
+            f"  Entry mode: {decision.entry_mode.value} | trigger={decision.entry_trigger_reason or 'n/a'} | "
+            f"extension_penalty={decision.extension_penalty:.2f} | overheat_penalty={decision.overheat_penalty:.2f}"
+        )
+        if decision.position_lifecycle_state is not None:
+            lines.append(f"  Lifecycle state: {decision.position_lifecycle_state.value}")
         lines.append(f"  Thesis: {decision.thesis}")
         source_extra = decision.source_metadata.extra
+        extension_metrics = source_extra.get("extension_metrics", decision.extension_metrics)
+        if isinstance(extension_metrics, dict) and extension_metrics:
+            lines.append(
+                "  Entry metrics: "
+                f"ext_ma20={float(extension_metrics.get('extension_over_ma20', 0.0)):.2%}, "
+                f"rsi14={float(extension_metrics.get('rsi14', 50.0)):.1f}, "
+                f"breakout_dist={float(extension_metrics.get('breakout_distance', 0.0)):.2%}"
+            )
         if decision.source_metadata.parser_mode == "upstream_error_no_entry" or source_extra.get("fallback_origin"):
             lines.append("  Fallback: upstream failure/insufficient-research state (non-tradable no-entry).")
         if source_extra.get("buy_promotion_applied"):
@@ -264,9 +280,48 @@ def generate_daily_report(
             "- BUY promotion diagnostics: "
             f"promoted={summary.promoted_buy_count}, "
             f"promoted_from_debate={summary.promoted_buy_from_debate_count}, "
+            f"promoted_after_validation={summary.promoted_buy_after_validation_count}, "
             f"blocked_fallback={summary.blocked_buy_due_to_fallback_count}, "
             f"blocked_thesis={summary.blocked_buy_due_to_thesis_inconsistency_count}"
         )
+        lines.append(
+            "- Entry mode diagnostics: "
+            + ", ".join(f"{mode}={count}" for mode, count in sorted((summary.entry_mode_counts or {}).items()))
+        )
+        lines.append(
+            "- Entry block diagnostics: "
+            f"extension={summary.buy_blocked_due_to_extension_count}, "
+            f"overheat={summary.buy_blocked_due_to_overheat_count}, "
+            f"missing_pullback={summary.buy_blocked_due_to_missing_pullback_confirmation_count}, "
+            f"missing_breakout={summary.buy_blocked_due_to_missing_breakout_confirmation_count}"
+        )
+        lines.append(
+            "- Exit lifecycle diagnostics: "
+            f"trim_partial={summary.trim_partial_count}, "
+            f"reduce_to_core={summary.reduce_to_core_count}, "
+            f"trend_failure={summary.trend_failure_exit_count}, "
+            f"time_stop={summary.time_stop_exit_count}, "
+            f"regime_exit={summary.regime_exit_count}"
+        )
+        lines.append(
+            "- Source pools: "
+            + ", ".join(
+                f"{pool}={count}" for pool, count in sorted((summary.source_pool_counts or {}).items())
+            )
+        )
+        lines.append(
+            "- Entry extension metrics: "
+            f"avg_ext_ma20={summary.average_entry_extension_metrics.get('avg_extension_over_ma20', 0.0):.2%}, "
+            f"avg_rsi14={summary.average_entry_extension_metrics.get('avg_entry_rsi14', 50.0):.1f}"
+        )
+        if summary.realized_vs_unrealized_by_exit_type:
+            lines.append(
+                "- Realized/Unrealized by exit type: "
+                + ", ".join(
+                    f"{name}={value:.2f}"
+                    for name, value in sorted(summary.realized_vs_unrealized_by_exit_type.items())
+                )
+            )
         lines.append(
             "- Consistency diagnostics: "
             f"action_thesis_mismatch={summary.action_thesis_mismatch_count}, "

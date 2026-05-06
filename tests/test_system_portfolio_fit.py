@@ -7,6 +7,7 @@ from tradingagents.system.portfolio import PortfolioService
 from tradingagents.system.schemas import (
     ExecutionConstraints,
     OrderIntentType,
+    PositionSnapshot,
     PortfolioSnapshot,
     ResearchDecision,
     RiskDecision,
@@ -93,3 +94,97 @@ def test_portfolio_service_maps_avoid_to_non_actionable_no_entry():
     fit = service.assess_portfolio_fit(decision, risk, portfolio, current_position=None, market_bar=bar)
     assert not fit.fits_portfolio
     assert fit.recommended_action == OrderIntentType.AVOID
+
+
+def test_portfolio_service_maps_sell_lifecycle_to_trim_partial():
+    service = PortfolioService()
+    as_of = date(2026, 4, 13)
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.SELL,
+        confidence=0.62,
+        thesis="Trim winner.",
+        risk_flags=[],
+        invalidation_conditions=["invalid"],
+        time_horizon="1-4 weeks",
+        desired_position_fraction=0.0,
+        position_lifecycle_state=OrderIntentType.TRIM_PARTIAL,
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+            extra={"scale_out_fraction": 0.4, "exit_type": "regime_exit"},
+        ),
+    )
+    risk = RiskDecision(
+        source_decision_id=decision.decision_id,
+        symbol="AAPL",
+        as_of_date=as_of,
+        approved=True,
+        approved_size_fraction=0.0,
+        execution_constraints=ExecutionConstraints(),
+    )
+    current_position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=100,
+        avg_cost=90.0,
+        market_price=100.0,
+        market_value=10000.0,
+        cost_basis=9000.0,
+        unrealized_pnl=1000.0,
+    )
+    portfolio = PortfolioSnapshot(as_of_date=as_of, cash=50_000, equity=100_000, gross_exposure=10_000, positions=[current_position])
+    bar = MarketBar(symbol="AAPL", date=as_of, open=100, high=101, low=99, close=100, volume=1_500_000)
+    fit = service.assess_portfolio_fit(decision, risk, portfolio, current_position=current_position, market_bar=bar)
+    assert fit.fits_portfolio
+    assert fit.recommended_action == OrderIntentType.TRIM_PARTIAL
+    assert fit.target_weight < fit.current_weight
+
+
+def test_portfolio_service_maps_sell_lifecycle_to_reduce_to_core():
+    service = PortfolioService()
+    as_of = date(2026, 4, 13)
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.SELL,
+        confidence=0.66,
+        thesis="Reduce to core.",
+        risk_flags=[],
+        invalidation_conditions=["invalid"],
+        time_horizon="1-4 weeks",
+        desired_position_fraction=0.02,
+        position_lifecycle_state=OrderIntentType.REDUCE_TO_CORE,
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+            extra={"reduce_to_core_target_fraction": 0.02, "exit_type": "take_profit_reduce_to_core"},
+        ),
+    )
+    risk = RiskDecision(
+        source_decision_id=decision.decision_id,
+        symbol="AAPL",
+        as_of_date=as_of,
+        approved=True,
+        approved_size_fraction=0.0,
+        execution_constraints=ExecutionConstraints(),
+    )
+    current_position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=100,
+        avg_cost=90.0,
+        market_price=100.0,
+        market_value=10000.0,
+        cost_basis=9000.0,
+        unrealized_pnl=1000.0,
+    )
+    portfolio = PortfolioSnapshot(as_of_date=as_of, cash=50_000, equity=100_000, gross_exposure=10_000, positions=[current_position])
+    bar = MarketBar(symbol="AAPL", date=as_of, open=100, high=101, low=99, close=100, volume=1_500_000)
+    fit = service.assess_portfolio_fit(decision, risk, portfolio, current_position=current_position, market_bar=bar)
+    assert fit.fits_portfolio
+    assert fit.recommended_action == OrderIntentType.REDUCE_TO_CORE
+    assert fit.target_weight == 0.02

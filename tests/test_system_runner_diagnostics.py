@@ -71,4 +71,10 @@ def test_runner_emits_action_and_block_diagnostics(monkeypatch, tmp_path):
     assert isinstance(summary.buy_rewrite_failure_count, int)
     assert isinstance(summary.final_action_downgrade_count, int)
     assert isinstance(summary.inconsistent_buy_prevented_count, int)
+    assert isinstance(summary.entry_mode_counts, dict)
+    assert isinstance(summary.promoted_buy_after_validation_count, int)
+    assert isinstance(summary.buy_blocked_due_to_extension_count, int)
+    assert isinstance(summary.trim_partial_count, int)
+    assert isinstance(summary.source_pool_counts, dict)
+    assert isinstance(summary.average_entry_extension_metrics, dict)
     assert summary.flat_book_suppressed
