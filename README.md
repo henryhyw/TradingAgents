@@ -251,8 +251,8 @@ This installs Python runtime, creates venv, installs project, and writes `/opt/t
 
 Cron behavior:
 
-- `CRON_TZ=America/New_York`
-- default schedule: `10 16 * * 1-5`
+- cron is installed using the VM's UTC clock with an explicit `TZ=America/New_York` guard
+- default effective schedule: 16:10 New York time, Monday-Friday
 - executes `scripts/gcp/vm_daily_run.sh`
 - wrapper is idempotent for a given market date (skips if already completed)
 
