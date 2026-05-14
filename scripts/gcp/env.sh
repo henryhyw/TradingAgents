@@ -64,10 +64,13 @@ gcp_vm_scp_retry() {
   local attempt=1
   local rc=0
   while (( attempt <= GCP_SSH_RETRIES )); do
-    if gcp_vm_scp "$@"; then
+    set +e
+    gcp_vm_scp "$@"
+    rc=$?
+    set -e
+    if [[ "${rc}" -eq 0 ]]; then
       return 0
     fi
-    rc=$?
     if (( attempt == GCP_SSH_RETRIES )); then
       return "${rc}"
     fi
@@ -83,10 +86,13 @@ gcp_vm_ssh_retry() {
   local attempt=1
   local rc=0
   while (( attempt <= GCP_SSH_RETRIES )); do
-    if gcp_vm_ssh "$@"; then
+    set +e
+    gcp_vm_ssh "$@"
+    rc=$?
+    set -e
+    if [[ "${rc}" -eq 0 ]]; then
       return 0
     fi
-    rc=$?
     if (( attempt == GCP_SSH_RETRIES )); then
       return "${rc}"
     fi
