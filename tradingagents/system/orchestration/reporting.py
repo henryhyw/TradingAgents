@@ -296,12 +296,28 @@ def generate_daily_report(
             f"missing_breakout={summary.buy_blocked_due_to_missing_breakout_confirmation_count}"
         )
         lines.append(
+            "- Entry balance diagnostics: "
+            f"near_miss={summary.buy_near_miss_count}, "
+            f"near_miss_breakout={summary.buy_near_miss_due_to_breakout_confirmation}, "
+            f"near_miss_pullback={summary.buy_near_miss_due_to_pullback_confirmation}, "
+            f"risk_on_participation_bias={summary.risk_on_participation_bias_applied_count}"
+        )
+        lines.append(
             "- Exit lifecycle diagnostics: "
             f"trim_partial={summary.trim_partial_count}, "
             f"reduce_to_core={summary.reduce_to_core_count}, "
             f"trend_failure={summary.trend_failure_exit_count}, "
             f"time_stop={summary.time_stop_exit_count}, "
             f"regime_exit={summary.regime_exit_count}"
+        )
+        lines.append(
+            "- Risk-on exit balance: "
+            f"full_exit_risk_reduction={summary.full_exit_due_to_risk_reduction_count}, "
+            f"exit_to_trim={summary.full_exit_rejected_in_favor_of_trim_count}, "
+            f"exit_to_reduce_core={summary.full_exit_rejected_in_favor_of_reduce_to_core_count}, "
+            f"starter_kept={summary.starter_position_kept_due_to_regime_count}, "
+            f"went_flat_in_risk_on={summary.went_flat_in_risk_on_count}, "
+            f"flattening_justifications={summary.risk_on_flattening_justification_count}"
         )
         lines.append(
             "- Source pools: "

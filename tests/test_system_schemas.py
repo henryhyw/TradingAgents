@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from tradingagents.system.schemas import (
+    DailyRunSummary,
     EntryMode,
     ExecutionConstraints,
     OrderIntent,
@@ -13,8 +14,10 @@ from tradingagents.system.schemas import (
     OrderSide,
     ResearchDecision,
     RiskDecision,
+    RunMode,
     SourceMetadata,
     TradeAction,
+    utc_now,
 )
 
 
@@ -94,3 +97,24 @@ def test_order_intent_accepts_reduce_to_core_type():
         source_risk_decision_id="rk_test",
     )
     assert intent.intent_type == OrderIntentType.REDUCE_TO_CORE
+
+
+def test_daily_run_summary_defaults_strategy_balance_diagnostics():
+    summary = DailyRunSummary(
+        as_of_date=date(2026, 5, 13),
+        mode=RunMode.DRY_RUN,
+        started_at=utc_now(),
+        completed_at=utc_now(),
+        status="completed",
+    )
+
+    assert summary.buy_near_miss_count == 0
+    assert summary.buy_near_miss_due_to_breakout_confirmation == 0
+    assert summary.buy_near_miss_due_to_pullback_confirmation == 0
+    assert summary.risk_on_participation_bias_applied_count == 0
+    assert summary.full_exit_due_to_risk_reduction_count == 0
+    assert summary.full_exit_rejected_in_favor_of_trim_count == 0
+    assert summary.full_exit_rejected_in_favor_of_reduce_to_core_count == 0
+    assert summary.starter_position_kept_due_to_regime_count == 0
+    assert summary.went_flat_in_risk_on_count == 0
+    assert summary.risk_on_flattening_justification_count == 0

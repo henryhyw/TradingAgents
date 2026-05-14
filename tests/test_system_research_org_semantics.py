@@ -7,7 +7,9 @@ import pandas as pd
 from tradingagents.system.config import load_settings
 from tradingagents.system.research import ResearchAdapter, ResearchOrganization
 from tradingagents.system.schemas import (
+    AnalystMemo,
     CandidateAssessment,
+    DebateSummary,
     EntryMode,
     OrderIntentType,
     PositionSnapshot,
@@ -114,6 +116,18 @@ def _regime(as_of: date) -> RegimeSnapshot:
         risk_on_score=0.62,
         risk_budget_multiplier=1.10,
         max_gross_exposure_fraction=0.30,
+    )
+
+
+def _balanced_regime(as_of: date) -> RegimeSnapshot:
+    return RegimeSnapshot(
+        as_of_date=as_of,
+        label=RegimeLabel.BALANCED,
+        volatility_regime="normal",
+        trend_regime="mixed",
+        risk_on_score=0.10,
+        risk_budget_multiplier=1.0,
+        max_gross_exposure_fraction=0.25,
     )
 
 
@@ -277,7 +291,13 @@ def test_research_org_assigns_pullback_entry_mode(monkeypatch, tmp_path):
     as_of = date(2026, 4, 15)
     trend = [100 + (i * 0.45) for i in range(150)]
     pullback = [trend[-1] * 0.97, trend[-1] * 0.965, trend[-1] * 0.972, trend[-1] * 0.981, trend[-1] * 0.989]
-    prices = trend + pullback + [trend[-1] * 0.995, trend[-1] * 1.0, trend[-1] * 1.01, trend[-1] * 1.02, trend[-1] * 1.03]
+    prices = trend + pullback + [
+        trend[-1] * 0.979,
+        trend[-1] * 0.983,
+        trend[-1] * 0.988,
+        trend[-1] * 0.992,
+        trend[-1] * 0.995,
+    ]
     history = _custom_history(prices, as_of, volume=7_500_000)
     provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
     org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.BUY, confidence=0.74))
@@ -287,6 +307,117 @@ def test_research_org_assigns_pullback_entry_mode(monkeypatch, tmp_path):
     assert decision.action == TradeAction.BUY
     assert decision.entry_mode == EntryMode.PULLBACK
     assert "pullback" in (decision.entry_trigger_reason or "")
+
+
+def test_research_org_relaxes_near_breakout_in_risk_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=0.8, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD))
+
+    entry_mode, reason, blockers, _, _ = org._entry_mode_and_gates(
+        candidate=_candidate(as_of),
+        regime=_regime(as_of),
+        technical_memo=AnalystMemo(
+            symbol="AAPL",
+            as_of_date=as_of,
+            role="Technical Analyst",
+            signal="bullish",
+            confidence=0.55,
+            summary="Strong trend with near-breakout confirmation.",
+        ),
+        technical_state={
+            "insufficient_history": False,
+            "extension_over_ma20": 0.045,
+            "extension_over_ma50": 0.09,
+            "rsi14": 66.0,
+            "trend_alignment": True,
+            "ret_3d": 0.003,
+            "ret_20d": 0.065,
+            "ret_60d": 0.18,
+            "breakout_distance": -0.002,
+            "pullback_distance_ma20": 0.08,
+            "pullback_distance_ma50": 0.12,
+        },
+    )
+
+    assert entry_mode == EntryMode.BREAKOUT
+    assert reason == "risk_on_relaxed_breakout_confirmation"
+    assert blockers == []
+
+
+def test_research_org_applies_risk_on_participation_bias(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=0.8, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD))
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.AVOID,
+        confidence=0.53,
+        thesis="Constructive entry setup with trend support, but original signal was cautious.",
+        risk_flags=[],
+        invalidation_conditions=["close below trend support"],
+        time_horizon="1-4 weeks",
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+        ),
+    )
+    debate = DebateSummary(
+        symbol="AAPL",
+        as_of_date=as_of,
+        adjudication="Bear case is not strong enough to suppress a validated risk-on starter entry.",
+        winning_side="bear",
+        confidence_balance=0.60,
+    )
+    technical_memo = AnalystMemo(
+        symbol="AAPL",
+        as_of_date=as_of,
+        role="Technical Analyst",
+        signal="bullish",
+        confidence=0.56,
+        summary="Trend aligned with near breakout confirmation.",
+    )
+    technical_state = {
+        "insufficient_history": False,
+        "close": 120.0,
+        "sma20": 115.0,
+        "sma50": 110.0,
+        "extension_over_ma20": 0.043,
+        "extension_over_ma50": 0.091,
+        "rsi14": 65.0,
+        "trend_alignment": True,
+        "ret_3d": 0.004,
+        "ret_20d": 0.07,
+        "ret_60d": 0.18,
+        "breakout_distance": 0.003,
+        "pullback_distance_ma20": 0.07,
+        "pullback_distance_ma50": 0.11,
+    }
+
+    updated, updated_debate = org._adjudicate_long_only_action(
+        decision=decision,
+        debate=debate,
+        candidate=_candidate(as_of),
+        regime=_regime(as_of),
+        technical_memo=technical_memo,
+        current_position=None,
+        technical_state=technical_state,
+    )
+
+    assert updated.action == TradeAction.BUY
+    assert updated.desired_position_fraction == settings.risk.risk_on_starter_position_fraction
+    assert updated.source_metadata.extra.get("risk_on_participation_bias_applied") is True
+    assert updated.source_metadata.extra.get("buy_promotion_source") == "risk_on_participation_bias"
+    assert "risk_on_participation_bias" in (updated_debate.override_reason or "")
 
 
 def test_research_org_blocks_overheated_breakout_buy(monkeypatch, tmp_path):
@@ -352,5 +483,73 @@ def test_research_org_applies_time_stop_exit(monkeypatch, tmp_path):
     decision, _ = org.run("AAPL", as_of, _candidate(as_of), _regime(as_of), current_position=position, position_holding_days=15)
 
     assert decision.action == TradeAction.SELL
+    assert decision.position_lifecycle_state == OrderIntentType.TRIM_PARTIAL
+    assert decision.source_metadata.extra.get("exit_type") == "time_stop_exit"
+
+
+def test_research_org_applies_full_time_stop_exit_outside_risk_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    prices = [100 + (i * 0.08) for i in range(180)]
+    history = _custom_history(prices, as_of, volume=6_500_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD, confidence=0.58))
+    close = float(history["Close"].iloc[-1])
+    position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=120,
+        avg_cost=close * 0.995,
+        market_price=close,
+        market_value=120 * close,
+        cost_basis=120 * close * 0.995,
+        unrealized_pnl=(close - (close * 0.995)) * 120,
+    )
+
+    decision, _ = org.run(
+        "AAPL",
+        as_of,
+        _candidate(as_of),
+        _balanced_regime(as_of),
+        current_position=position,
+        position_holding_days=15,
+    )
+
+    assert decision.action == TradeAction.SELL
     assert decision.position_lifecycle_state == OrderIntentType.EXIT
     assert decision.source_metadata.extra.get("exit_type") == "time_stop_exit"
+
+
+def test_research_org_trims_generic_sell_for_profitable_risk_on_position(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 4, 15)
+    base = [100 + (i * 0.25) for i in range(165)]
+    prices = base + [base[-1] * 1.025, base[-1] * 1.035, base[-1] * 1.045, base[-1] * 1.055, base[-1] * 1.065]
+    history = _custom_history(prices, as_of, volume=7_500_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.SELL, confidence=0.62))
+    close = float(history["Close"].iloc[-1])
+    position = PositionSnapshot(
+        symbol="AAPL",
+        quantity=100,
+        avg_cost=close / 1.08,
+        market_price=close,
+        market_value=100 * close,
+        cost_basis=100 * close / 1.08,
+        unrealized_pnl=(close - (close / 1.08)) * 100,
+    )
+
+    decision, _ = org.run(
+        "AAPL",
+        as_of,
+        _candidate(as_of),
+        _regime(as_of),
+        current_position=position,
+        position_holding_days=6,
+    )
+
+    assert decision.action == TradeAction.SELL
+    assert decision.position_lifecycle_state == OrderIntentType.TRIM_PARTIAL
+    assert decision.source_metadata.extra.get("full_exit_rejected_in_favor_of_trim") is True
+    assert "partial trim rationale" in decision.thesis.lower()

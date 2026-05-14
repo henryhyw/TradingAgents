@@ -482,7 +482,11 @@ class ResearchOrganization:
             blockers.append(f"regime_{regime.label.value}_blocks_new_entries")
         if technical_memo.signal != "bullish":
             blockers.append("technical_signal_not_bullish")
-        if technical_memo.confidence < self.settings.data.entry_confidence_min:
+        risk_on_contained = self._is_risk_on_contained(regime)
+        entry_confidence_min = self.settings.data.entry_confidence_min
+        if risk_on_contained:
+            entry_confidence_min = max(0.50, entry_confidence_min - self.settings.data.risk_on_entry_confidence_relief)
+        if technical_memo.confidence < entry_confidence_min:
             blockers.append("technical_confidence_too_low")
         if candidate is not None and candidate.relative_strength_20d <= 0:
             blockers.append("relative_strength_not_positive")
@@ -516,15 +520,47 @@ class ResearchOrganization:
         ):
             blockers.append("rsi_overheat_block")
 
-        breakout_confirmed = bool(technical_state.get("breakout_confirmed", False))
-        pullback_confirmed = bool(technical_state.get("pullback_confirmed", False))
-        reacceleration_confirmed = bool(technical_state.get("reacceleration_confirmed", False))
-        breakout_mode_ok = breakout_confirmed
+        trend_alignment = bool(technical_state.get("trend_alignment", False))
+        ret_3d = float(technical_state.get("ret_3d", 0.0))
+        ret_20d = float(technical_state.get("ret_20d", 0.0))
+        breakout_distance = float(technical_state.get("breakout_distance", 0.0))
+        pullback_distance_ma20 = float(technical_state.get("pullback_distance_ma20", 1.0))
+        pullback_distance_ma50 = float(technical_state.get("pullback_distance_ma50", 1.0))
+        candidate_relative_strength = 0.0 if candidate is None else candidate.relative_strength_20d
+        candidate_avg_dollar_volume = 0.0 if candidate is None else candidate.avg_dollar_volume_20d
+        candidate_return_20d = ret_20d if candidate is None else candidate.return_20d
+
+        breakout_buffer = self.settings.data.breakout_confirmation_buffer_fraction
+        pullback_distance_limit = self.settings.data.pullback_max_distance_fraction
+        reacceleration_min = self.settings.data.pullback_reacceleration_min_return_3d
+        if risk_on_contained:
+            breakout_buffer *= self.settings.data.risk_on_breakout_buffer_multiplier
+            pullback_distance_limit *= self.settings.data.risk_on_pullback_distance_multiplier
+            reacceleration_min = min(reacceleration_min, self.settings.data.risk_on_pullback_reacceleration_min_return_3d)
+
+        breakout_confirmed = breakout_distance >= breakout_buffer and trend_alignment
+        strong_risk_on_trend = (
+            risk_on_contained
+            and trend_alignment
+            and candidate_return_20d >= self.settings.data.risk_on_min_strong_trend_return_20d
+            and candidate_relative_strength >= self.settings.data.risk_on_min_relative_strength_20d
+            and candidate_avg_dollar_volume >= (self.settings.data.min_avg_dollar_volume * 2.0)
+            and extension_over_ma20 <= (self.settings.data.max_extension_over_ma20_fraction * 1.20)
+            and overheat_penalty < 0.65
+        )
+        risk_on_relaxed_breakout = (
+            strong_risk_on_trend and breakout_distance >= self.settings.data.risk_on_near_breakout_floor
+        )
+        pullback_confirmed = trend_alignment and (
+            pullback_distance_ma20 <= pullback_distance_limit
+            or pullback_distance_ma50 <= (pullback_distance_limit * 0.85)
+        )
+        reacceleration_confirmed = ret_3d >= reacceleration_min
+        breakout_mode_ok = breakout_confirmed or risk_on_relaxed_breakout
         pullback_mode_ok = pullback_confirmed and reacceleration_confirmed
 
         if regime is not None and regime.label.value == "balanced":
             # Balanced regime prefers pullback entries unless breakout quality is exceptional.
-            breakout_distance = float(technical_state.get("breakout_distance", 0.0))
             breakout_mode_ok = breakout_mode_ok and breakout_distance >= 0.015 and rsi14 < 76.0
 
         if blockers:
@@ -532,17 +568,42 @@ class ResearchOrganization:
                 blockers.append("missing_breakout_confirmation")
             if not pullback_mode_ok:
                 blockers.append("missing_pullback_confirmation")
+            if strong_risk_on_trend and not breakout_mode_ok and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006):
+                blockers.append("near_miss_breakout_confirmation")
+            if (
+                risk_on_contained
+                and trend_alignment
+                and not pullback_mode_ok
+                and min(pullback_distance_ma20, pullback_distance_ma50) <= (pullback_distance_limit * 1.20)
+                and ret_3d >= 0.0
+            ):
+                blockers.append("near_miss_pullback_confirmation")
             return EntryMode.NONE, blockers[0], list(dict.fromkeys(blockers)), extension_penalty, overheat_penalty
-        if pullback_mode_ok:
-            pullback_distance_ma20 = float(technical_state.get("pullback_distance_ma20", 1.0))
-            breakout_distance = float(technical_state.get("breakout_distance", 0.0))
-            if pullback_distance_ma20 <= self.settings.data.pullback_max_distance_fraction and breakout_distance < 0.04:
-                return EntryMode.PULLBACK, "pullback_confirmation_passed", [], extension_penalty, overheat_penalty
-        if breakout_mode_ok:
+        true_breakout_ok = breakout_confirmed
+        if regime is not None and regime.label.value == "balanced":
+            true_breakout_ok = true_breakout_ok and breakout_distance >= 0.015 and rsi14 < 76.0
+        if true_breakout_ok:
             return EntryMode.BREAKOUT, "breakout_confirmation_passed", [], extension_penalty, overheat_penalty
         if pullback_mode_ok:
-            return EntryMode.PULLBACK, "pullback_confirmation_passed", [], extension_penalty, overheat_penalty
+            if pullback_distance_ma20 <= pullback_distance_limit and breakout_distance < 0.04:
+                reason = "risk_on_relaxed_pullback_confirmation" if risk_on_contained else "pullback_confirmation_passed"
+                return EntryMode.PULLBACK, reason, [], extension_penalty, overheat_penalty
+        if breakout_mode_ok:
+            reason = "risk_on_relaxed_breakout_confirmation" if risk_on_relaxed_breakout and not breakout_confirmed else "breakout_confirmation_passed"
+            return EntryMode.BREAKOUT, reason, [], extension_penalty, overheat_penalty
+        if pullback_mode_ok:
+            reason = "risk_on_relaxed_pullback_confirmation" if risk_on_contained else "pullback_confirmation_passed"
+            return EntryMode.PULLBACK, reason, [], extension_penalty, overheat_penalty
         blockers.extend(["missing_breakout_confirmation", "missing_pullback_confirmation"])
+        if strong_risk_on_trend and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006):
+            blockers.append("near_miss_breakout_confirmation")
+        if (
+            risk_on_contained
+            and trend_alignment
+            and min(pullback_distance_ma20, pullback_distance_ma50) <= (pullback_distance_limit * 1.20)
+            and ret_3d >= 0.0
+        ):
+            blockers.append("near_miss_pullback_confirmation")
         return EntryMode.NONE, "entry_confirmation_missing", blockers, extension_penalty, overheat_penalty
 
     def _entry_gate_satisfied(
@@ -638,7 +699,10 @@ class ResearchOrganization:
             return False, "fallback_origin_non_promotable"
         if any(flag.lower() == "insufficient_research_confidence" for flag in decision.risk_flags):
             return False, "insufficient_research_confidence"
-        if decision.confidence < self.settings.data.entry_confidence_min:
+        entry_confidence_min = self.settings.data.entry_confidence_min
+        if self._is_risk_on_contained(regime):
+            entry_confidence_min = max(0.50, entry_confidence_min - self.settings.data.risk_on_entry_confidence_relief)
+        if decision.confidence < entry_confidence_min:
             return False, "decision_confidence_below_threshold"
         if debate.confidence_balance < 0.58:
             return False, "debate_balance_below_threshold"
@@ -671,6 +735,12 @@ class ResearchOrganization:
             return 0.0
         return (current_position.market_price / current_position.avg_cost) - 1.0
 
+    @staticmethod
+    def _is_risk_on_contained(regime: RegimeSnapshot | None) -> bool:
+        if regime is None or regime.label.value != "risk_on":
+            return False
+        return regime.volatility_regime in {"contained", "normal", "low"}
+
     def _inventory_lifecycle_overlay(
         self,
         *,
@@ -691,6 +761,17 @@ class ResearchOrganization:
         unrealized_return = self._current_unrealized_return(current_position)
         rel_strength = 0.0 if candidate is None else candidate.relative_strength_20d
         regime_label = None if regime is None else regime.label.value
+        risk_on_contained = self._is_risk_on_contained(regime)
+        trim_trigger = (
+            self.settings.risk.risk_on_trim_profit_trigger_fraction
+            if risk_on_contained
+            else self.settings.risk.trim_profit_trigger_fraction
+        )
+        reduce_trigger = (
+            self.settings.risk.risk_on_reduce_to_core_profit_trigger_fraction
+            if risk_on_contained
+            else self.settings.risk.reduce_to_core_profit_trigger_fraction
+        )
 
         trend_failure = (
             close < (sma20 * (1.0 - self.settings.risk.trend_failure_ma_slack_fraction))
@@ -718,6 +799,14 @@ class ResearchOrganization:
             and holding_days >= self.settings.risk.time_stop_days
             and unrealized_return < self.settings.risk.time_stop_min_progress_fraction
         ):
+            if risk_on_contained and trend_alignment and unrealized_return >= 0:
+                return {
+                    "action": TradeAction.SELL,
+                    "lifecycle": OrderIntentType.TRIM_PARTIAL,
+                    "reason": "time_stop_trim_stalled_position",
+                    "target_fraction": None,
+                    "exit_type": "time_stop_exit",
+                }
             return {
                 "action": TradeAction.SELL,
                 "lifecycle": OrderIntentType.EXIT,
@@ -745,8 +834,11 @@ class ResearchOrganization:
                 }
 
         if (
-            unrealized_return >= self.settings.risk.reduce_to_core_profit_trigger_fraction
-            and (extension >= self.settings.data.max_extension_over_ma20_fraction or rsi14 >= self.settings.data.overheat_rsi_threshold)
+            unrealized_return >= reduce_trigger
+            and (
+                extension >= (self.settings.data.max_extension_over_ma20_fraction * (0.85 if risk_on_contained else 1.0))
+                or rsi14 >= self.settings.data.overheat_rsi_threshold
+            )
         ):
             return {
                 "action": TradeAction.SELL,
@@ -755,7 +847,10 @@ class ResearchOrganization:
                 "target_fraction": self.settings.risk.reduce_to_core_target_fraction,
                 "exit_type": "take_profit_reduce_to_core",
             }
-        if unrealized_return >= self.settings.risk.trim_profit_trigger_fraction and extension >= self.settings.data.max_extension_over_ma20_fraction:
+        if unrealized_return >= trim_trigger and (
+            extension >= (self.settings.data.max_extension_over_ma20_fraction * (0.65 if risk_on_contained else 1.0))
+            or rsi14 >= (self.settings.data.overheat_rsi_threshold - (4.0 if risk_on_contained else 0.0))
+        ):
             return {
                 "action": TradeAction.SELL,
                 "lifecycle": OrderIntentType.TRIM_PARTIAL,
@@ -820,9 +915,21 @@ class ResearchOrganization:
             lifecycle_state = decision.position_lifecycle_state
             lifecycle_label = "exit" if lifecycle_state is None else lifecycle_state.value
             exit_type = str(decision.source_metadata.extra.get("exit_type", "risk_reduction"))
+            if lifecycle_state in {OrderIntentType.TRIM_PARTIAL, OrderIntentType.TRIM, OrderIntentType.SCALE_OUT}:
+                return (
+                    "Partial trim rationale: existing long inventory is profitable or heated enough to reduce risk, "
+                    "but the favorable regime does not justify abandoning the position. "
+                    f"Lifecycle={lifecycle_label}; exit_type={exit_type}; remaining exposure preserves upside participation."
+                )
+            if lifecycle_state == OrderIntentType.REDUCE_TO_CORE:
+                return (
+                    "Reduce-to-core rationale: position risk/reward is compressed after gains or extension, "
+                    "so exposure is cut to a core allocation rather than fully exited. "
+                    f"Lifecycle={lifecycle_label}; exit_type={exit_type}."
+                )
             return (
-                "Exit rationale: existing long inventory should be reduced or closed due to deteriorating "
-                "risk/reward versus current portfolio constraints. "
+                "Full exit rationale: existing long inventory is being closed because measurable exit conditions "
+                "or portfolio constraints now outweigh continued participation. "
                 f"Lifecycle={lifecycle_label}; exit_type={exit_type}."
             )
         if has_inventory:
@@ -868,6 +975,13 @@ class ResearchOrganization:
         buy_blocked_due_to_overheat = False
         buy_blocked_due_to_missing_pullback_confirmation = False
         buy_blocked_due_to_missing_breakout_confirmation = False
+        buy_near_miss_due_to_breakout_confirmation = False
+        buy_near_miss_due_to_pullback_confirmation = False
+        risk_on_participation_bias_applied = False
+        full_exit_due_to_risk_reduction = False
+        full_exit_rejected_in_favor_of_trim = False
+        full_exit_rejected_in_favor_of_reduce_to_core = False
+        starter_position_kept_due_to_regime = False
         lifecycle_overlay_applied = False
         lifecycle_state: OrderIntentType | None = decision.position_lifecycle_state
         lifecycle_target_fraction: float | None = None
@@ -887,6 +1001,10 @@ class ResearchOrganization:
             buy_blocked_due_to_missing_pullback_confirmation = True
         if "missing_breakout_confirmation" in entry_blockers:
             buy_blocked_due_to_missing_breakout_confirmation = True
+        if "near_miss_breakout_confirmation" in entry_blockers:
+            buy_near_miss_due_to_breakout_confirmation = True
+        if "near_miss_pullback_confirmation" in entry_blockers:
+            buy_near_miss_due_to_pullback_confirmation = True
 
         inventory_overlay = self._inventory_lifecycle_overlay(
             current_position=current_position,
@@ -903,6 +1021,13 @@ class ResearchOrganization:
                 final_action = TradeAction.SELL
                 final_action_changed = True
                 override_reasons.append(f"inventory_lifecycle_overlay:{inventory_overlay['reason']}")
+            if original_action == TradeAction.SELL and self._is_risk_on_contained(regime):
+                if lifecycle_state in {OrderIntentType.TRIM_PARTIAL, OrderIntentType.TRIM, OrderIntentType.SCALE_OUT}:
+                    full_exit_rejected_in_favor_of_trim = True
+                    override_reasons.append("risk_on_full_exit_trimmed_instead")
+                if lifecycle_state == OrderIntentType.REDUCE_TO_CORE:
+                    full_exit_rejected_in_favor_of_reduce_to_core = True
+                    override_reasons.append("risk_on_full_exit_reduced_to_core")
 
         if final_action == TradeAction.SELL and not has_inventory:
             final_action = TradeAction.AVOID
@@ -947,6 +1072,30 @@ class ResearchOrganization:
                     buy_blocked_due_to_missing_pullback_confirmation = True
                 if entry_reason == "missing_breakout_confirmation":
                     buy_blocked_due_to_missing_breakout_confirmation = True
+
+        if final_action in {TradeAction.HOLD, TradeAction.AVOID} and not has_inventory:
+            participation_semantics = self._thesis_semantics(decision.thesis)
+            participation_bias_allowed = (
+                self._is_risk_on_contained(regime)
+                and entry_mode != EntryMode.NONE
+                and not fallback_origin
+                and technical_memo.signal == "bullish"
+                and decision.confidence >= max(0.50, self.settings.data.entry_confidence_min - 0.08)
+                and not bool(participation_semantics.get("strongly_bearish", False))
+                and overheat_penalty < 0.65
+                and (debate.winning_side != "bear" or debate.confidence_balance < 0.64)
+                and candidate is not None
+                and candidate.eligible
+                and not candidate.watchlist_only
+                and candidate.relative_strength_20d >= self.settings.data.risk_on_min_relative_strength_20d
+                and candidate.avg_dollar_volume_20d >= self.settings.data.min_avg_dollar_volume
+            )
+            if participation_bias_allowed:
+                final_action = TradeAction.BUY
+                final_action_changed = True
+                promoted_buy = True
+                risk_on_participation_bias_applied = True
+                override_reasons.append(f"risk_on_participation_bias:{entry_reason}")
 
         if final_action == TradeAction.BUY and fallback_origin:
             final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
@@ -1029,6 +1178,55 @@ class ResearchOrganization:
             final_action_changed = True
             override_reasons.append("sell_recast_to_avoid_no_inventory")
 
+        if (
+            final_action == TradeAction.SELL
+            and has_inventory
+            and self._is_risk_on_contained(regime)
+            and lifecycle_state in {None, OrderIntentType.EXIT}
+        ):
+            close = float(technical_state.get("close", 0.0))
+            sma20 = float(technical_state.get("sma20", 0.0))
+            sma50 = float(technical_state.get("sma50", 0.0))
+            extension = float(technical_state.get("extension_over_ma20", 0.0))
+            rsi14 = float(technical_state.get("rsi14", 50.0))
+            rel_strength = 0.0 if candidate is None else candidate.relative_strength_20d
+            unrealized_return = self._current_unrealized_return(current_position)
+            explicit_exit_type = None if inventory_overlay is None else inventory_overlay.get("exit_type")
+            severe_breakdown = (
+                close < sma20
+                and (sma20 < sma50 or rel_strength <= self.settings.risk.trend_failure_relative_strength_floor)
+            )
+            severe_loss_or_heat = unrealized_return <= -0.04 or (
+                extension >= self.settings.data.overheat_extension_fraction
+                and rsi14 >= (self.settings.data.overheat_rsi_threshold + 3.0)
+            )
+            explicit_hard_exit = explicit_exit_type in {"trend_failure_exit", "regime_exit"}
+            if not (severe_breakdown or severe_loss_or_heat or explicit_hard_exit):
+                if (
+                    unrealized_return >= self.settings.risk.risk_on_reduce_to_core_profit_trigger_fraction
+                    or extension >= (self.settings.data.max_extension_over_ma20_fraction * 0.95)
+                ):
+                    lifecycle_state = OrderIntentType.REDUCE_TO_CORE
+                    lifecycle_target_fraction = self.settings.risk.reduce_to_core_target_fraction
+                    full_exit_rejected_in_favor_of_reduce_to_core = True
+                    override_reasons.append("risk_on_full_exit_reduced_to_core")
+                elif (
+                    unrealized_return >= self.settings.risk.risk_on_trim_profit_trigger_fraction
+                    or extension >= (self.settings.data.max_extension_over_ma20_fraction * 0.65)
+                    or rsi14 >= (self.settings.data.overheat_rsi_threshold - 4.0)
+                ):
+                    lifecycle_state = OrderIntentType.TRIM_PARTIAL
+                    lifecycle_target_fraction = None
+                    full_exit_rejected_in_favor_of_trim = True
+                    override_reasons.append("risk_on_full_exit_trimmed_instead")
+                else:
+                    final_action = TradeAction.HOLD
+                    lifecycle_state = None
+                    lifecycle_target_fraction = None
+                    final_action_changed = True
+                    starter_position_kept_due_to_regime = True
+                    override_reasons.append("risk_on_full_exit_rejected_weak_justification")
+
         preferred_action = self._preferred_action_from_debate(debate.winning_side, has_inventory)
         aligned = final_action == preferred_action
         if not aligned:
@@ -1048,7 +1246,13 @@ class ResearchOrganization:
             else:
                 desired_position_fraction = 0.0
         elif desired_position_fraction is None or desired_position_fraction <= 0:
-            desired_position_fraction = min(0.04, self.settings.risk.max_position_size_fraction)
+            if risk_on_participation_bias_applied:
+                desired_position_fraction = min(
+                    self.settings.risk.risk_on_starter_position_fraction,
+                    self.settings.risk.max_position_size_fraction,
+                )
+            else:
+                desired_position_fraction = min(0.04, self.settings.risk.max_position_size_fraction)
         if final_action == TradeAction.BUY:
             if entry_mode == EntryMode.BREAKOUT and regime is not None and regime.label.value == "balanced":
                 desired_position_fraction *= 0.75
@@ -1058,6 +1262,18 @@ class ResearchOrganization:
             desired_position_fraction *= penalty_scale
             desired_position_fraction = _clamp(desired_position_fraction, 0.0, self.settings.risk.max_position_size_fraction)
 
+        pre_synthesis_exit_type: str | None = None
+        if final_action == TradeAction.SELL:
+            if full_exit_rejected_in_favor_of_reduce_to_core:
+                pre_synthesis_exit_type = "risk_compression_reduce_to_core"
+            elif full_exit_rejected_in_favor_of_trim:
+                pre_synthesis_exit_type = "risk_compression_trim_partial"
+            elif inventory_overlay is not None:
+                pre_synthesis_exit_type = str(inventory_overlay.get("exit_type") or "inventory_reduction")
+            else:
+                pre_synthesis_exit_type = "risk_reduction"
+        synthesis_source_extra = dict(decision.source_metadata.extra)
+        synthesis_source_extra["exit_type"] = pre_synthesis_exit_type
         synthesis_decision = decision.model_copy(
             update={
                 "entry_mode": entry_mode,
@@ -1072,6 +1288,7 @@ class ResearchOrganization:
                     "pullback_distance_ma20": float(technical_state.get("pullback_distance_ma20", 1.0)),
                 },
                 "position_lifecycle_state": lifecycle_state,
+                "source_metadata": decision.source_metadata.model_copy(update={"extra": synthesis_source_extra}),
             }
         )
         synthesized_thesis = self._synthesize_final_thesis(
@@ -1085,13 +1302,24 @@ class ResearchOrganization:
         )
         thesis_rewritten = synthesized_thesis.strip() != decision.thesis.strip()
 
+        resolved_exit_type: str | None = None
+        if final_action == TradeAction.SELL:
+            resolved_exit_type = pre_synthesis_exit_type
+            full_exit_due_to_risk_reduction = (
+                resolved_exit_type == "risk_reduction" and lifecycle_state in {None, OrderIntentType.EXIT}
+            )
+
         updated_source_extra = dict(decision.source_metadata.extra)
         updated_source_extra.update(
             {
                 "fallback_origin": fallback_origin,
                 "fallback_origin_reason": fallback_reason,
                 "buy_promotion_applied": promoted_buy,
-                "buy_promotion_source": "debate_bull" if promoted_buy_from_debate else None,
+                "buy_promotion_source": (
+                    "debate_bull"
+                    if promoted_buy_from_debate
+                    else ("risk_on_participation_bias" if risk_on_participation_bias_applied else None)
+                ),
                 "buy_blocked_due_to_fallback": buy_blocked_due_to_fallback,
                 "buy_blocked_due_to_thesis_inconsistency": buy_blocked_due_to_thesis_inconsistency,
                 "action_thesis_mismatch_detected": action_thesis_mismatch_detected,
@@ -1108,6 +1336,14 @@ class ResearchOrganization:
                 "buy_blocked_due_to_overheat": buy_blocked_due_to_overheat,
                 "buy_blocked_due_to_missing_pullback_confirmation": buy_blocked_due_to_missing_pullback_confirmation,
                 "buy_blocked_due_to_missing_breakout_confirmation": buy_blocked_due_to_missing_breakout_confirmation,
+                "buy_near_miss_due_to_breakout_confirmation": buy_near_miss_due_to_breakout_confirmation,
+                "buy_near_miss_due_to_pullback_confirmation": buy_near_miss_due_to_pullback_confirmation,
+                "buy_near_miss": buy_near_miss_due_to_breakout_confirmation or buy_near_miss_due_to_pullback_confirmation,
+                "risk_on_participation_bias_applied": risk_on_participation_bias_applied,
+                "full_exit_due_to_risk_reduction": full_exit_due_to_risk_reduction,
+                "full_exit_rejected_in_favor_of_trim": full_exit_rejected_in_favor_of_trim,
+                "full_exit_rejected_in_favor_of_reduce_to_core": full_exit_rejected_in_favor_of_reduce_to_core,
+                "starter_position_kept_due_to_regime": starter_position_kept_due_to_regime,
                 "entry_mode": entry_mode.value,
                 "entry_trigger_reason": entry_reason,
                 "entry_blockers": entry_blockers,
@@ -1118,7 +1354,7 @@ class ResearchOrganization:
                 "lifecycle_overlay_applied": lifecycle_overlay_applied,
                 "position_lifecycle_state": None if lifecycle_state is None else lifecycle_state.value,
                 "position_holding_days": position_holding_days,
-                "exit_type": None if inventory_overlay is None else inventory_overlay.get("exit_type"),
+                "exit_type": resolved_exit_type,
                 "final_thesis_rewritten": thesis_rewritten,
                 "thesis_semantics": thesis_semantics,
                 "final_action": final_action.value,

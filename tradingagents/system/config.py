@@ -67,14 +67,21 @@ class DataSettings(BaseSettingsModel):
     fail_live_run_on_data_impairment: bool = True
     breakout_lookback_days: PositiveInt = 20
     breakout_confirmation_buffer_fraction: float = 0.0015
+    risk_on_breakout_buffer_multiplier: float = 0.50
+    risk_on_near_breakout_floor: float = -0.004
     pullback_ma_short_days: PositiveInt = 20
     pullback_ma_long_days: PositiveInt = 50
     pullback_max_distance_fraction: float = 0.04
     pullback_reacceleration_min_return_3d: float = 0.005
+    risk_on_pullback_distance_multiplier: float = 1.35
+    risk_on_pullback_reacceleration_min_return_3d: float = 0.0025
     max_extension_over_ma20_fraction: float = 0.09
     overheat_extension_fraction: float = 0.14
     overheat_rsi_threshold: float = 78.0
     entry_confidence_min: float = 0.58
+    risk_on_entry_confidence_relief: float = 0.04
+    risk_on_min_strong_trend_return_20d: float = 0.04
+    risk_on_min_relative_strength_20d: float = 0.005
     regime_critical_proxies: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "^VIX"])
     regime_proxies: list[str] = Field(
         default_factory=lambda: [
@@ -120,6 +127,9 @@ class RiskSettings(BaseSettingsModel):
     regime_high_vol_multiplier: float = 0.50
     trim_profit_trigger_fraction: float = 0.10
     reduce_to_core_profit_trigger_fraction: float = 0.18
+    risk_on_trim_profit_trigger_fraction: float = 0.07
+    risk_on_reduce_to_core_profit_trigger_fraction: float = 0.15
+    risk_on_starter_position_fraction: float = 0.025
     scale_out_fraction: float = 0.33
     reduce_to_core_target_fraction: float = 0.02
     time_stop_days: PositiveInt = 8
@@ -353,14 +363,23 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "fail_live_run_on_data_impairment": _env_bool("TRADINGAGENTS_FAIL_LIVE_RUN_ON_DATA_IMPAIRMENT"),
             "breakout_lookback_days": _env_int("TRADINGAGENTS_BREAKOUT_LOOKBACK_DAYS"),
             "breakout_confirmation_buffer_fraction": _env_float("TRADINGAGENTS_BREAKOUT_CONFIRMATION_BUFFER"),
+            "risk_on_breakout_buffer_multiplier": _env_float("TRADINGAGENTS_RISK_ON_BREAKOUT_BUFFER_MULTIPLIER"),
+            "risk_on_near_breakout_floor": _env_float("TRADINGAGENTS_RISK_ON_NEAR_BREAKOUT_FLOOR"),
             "pullback_ma_short_days": _env_int("TRADINGAGENTS_PULLBACK_MA_SHORT_DAYS"),
             "pullback_ma_long_days": _env_int("TRADINGAGENTS_PULLBACK_MA_LONG_DAYS"),
             "pullback_max_distance_fraction": _env_float("TRADINGAGENTS_PULLBACK_MAX_DISTANCE"),
             "pullback_reacceleration_min_return_3d": _env_float("TRADINGAGENTS_PULLBACK_REACCELERATION_MIN_RETURN_3D"),
+            "risk_on_pullback_distance_multiplier": _env_float("TRADINGAGENTS_RISK_ON_PULLBACK_DISTANCE_MULTIPLIER"),
+            "risk_on_pullback_reacceleration_min_return_3d": _env_float(
+                "TRADINGAGENTS_RISK_ON_PULLBACK_REACCELERATION_MIN_RETURN_3D"
+            ),
             "max_extension_over_ma20_fraction": _env_float("TRADINGAGENTS_MAX_EXTENSION_OVER_MA20"),
             "overheat_extension_fraction": _env_float("TRADINGAGENTS_OVERHEAT_EXTENSION"),
             "overheat_rsi_threshold": _env_float("TRADINGAGENTS_OVERHEAT_RSI_THRESHOLD"),
             "entry_confidence_min": _env_float("TRADINGAGENTS_ENTRY_CONFIDENCE_MIN"),
+            "risk_on_entry_confidence_relief": _env_float("TRADINGAGENTS_RISK_ON_ENTRY_CONFIDENCE_RELIEF"),
+            "risk_on_min_strong_trend_return_20d": _env_float("TRADINGAGENTS_RISK_ON_MIN_TREND_RETURN_20D"),
+            "risk_on_min_relative_strength_20d": _env_float("TRADINGAGENTS_RISK_ON_MIN_RELATIVE_STRENGTH_20D"),
         },
         "risk": {
             "max_position_size_fraction": _env_float("TRADINGAGENTS_MAX_POSITION_SIZE"),
@@ -373,6 +392,11 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "volatility_target_annual": _env_float("TRADINGAGENTS_VOL_TARGET"),
             "trim_profit_trigger_fraction": _env_float("TRADINGAGENTS_TRIM_PROFIT_TRIGGER"),
             "reduce_to_core_profit_trigger_fraction": _env_float("TRADINGAGENTS_REDUCE_TO_CORE_PROFIT_TRIGGER"),
+            "risk_on_trim_profit_trigger_fraction": _env_float("TRADINGAGENTS_RISK_ON_TRIM_PROFIT_TRIGGER"),
+            "risk_on_reduce_to_core_profit_trigger_fraction": _env_float(
+                "TRADINGAGENTS_RISK_ON_REDUCE_TO_CORE_PROFIT_TRIGGER"
+            ),
+            "risk_on_starter_position_fraction": _env_float("TRADINGAGENTS_RISK_ON_STARTER_POSITION"),
             "scale_out_fraction": _env_float("TRADINGAGENTS_SCALE_OUT_FRACTION"),
             "reduce_to_core_target_fraction": _env_float("TRADINGAGENTS_REDUCE_TO_CORE_TARGET"),
             "time_stop_days": _env_int("TRADINGAGENTS_TIME_STOP_DAYS"),

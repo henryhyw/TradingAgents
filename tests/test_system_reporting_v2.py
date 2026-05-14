@@ -141,11 +141,21 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         buy_blocked_due_to_overheat_count=0,
         buy_blocked_due_to_missing_pullback_confirmation_count=0,
         buy_blocked_due_to_missing_breakout_confirmation_count=0,
+        buy_near_miss_count=1,
+        buy_near_miss_due_to_breakout_confirmation=1,
+        buy_near_miss_due_to_pullback_confirmation=0,
+        risk_on_participation_bias_applied_count=1,
         trim_partial_count=0,
         reduce_to_core_count=0,
         trend_failure_exit_count=0,
         time_stop_exit_count=0,
         regime_exit_count=0,
+        full_exit_due_to_risk_reduction_count=0,
+        full_exit_rejected_in_favor_of_trim_count=0,
+        full_exit_rejected_in_favor_of_reduce_to_core_count=0,
+        starter_position_kept_due_to_regime_count=0,
+        went_flat_in_risk_on_count=0,
+        risk_on_flattening_justification_count=0,
         source_pool_counts={"industry_leader": 1},
         average_entry_extension_metrics={"avg_extension_over_ma20": 0.04, "avg_entry_rsi14": 66.0},
         realized_vs_unrealized_by_exit_type={"realized_total": 0.0, "unrealized_total": 0.0},
@@ -191,7 +201,9 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "final_action=buy" in content.lower()
     assert "BUY promotion diagnostics" in content
     assert "Entry mode diagnostics" in content
+    assert "Entry balance diagnostics" in content
     assert "Exit lifecycle diagnostics" in content
+    assert "Risk-on exit balance" in content
     assert "Consistency diagnostics" in content
     assert "Semantic guardrails" in content
     assert (tmp_path / as_of.isoformat() / "summary.json").exists()

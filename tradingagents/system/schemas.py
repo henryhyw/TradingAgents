@@ -485,11 +485,21 @@ class DailyRunSummary(StrictModel):
     buy_blocked_due_to_overheat_count: int = 0
     buy_blocked_due_to_missing_pullback_confirmation_count: int = 0
     buy_blocked_due_to_missing_breakout_confirmation_count: int = 0
+    buy_near_miss_count: int = 0
+    buy_near_miss_due_to_breakout_confirmation: int = 0
+    buy_near_miss_due_to_pullback_confirmation: int = 0
+    risk_on_participation_bias_applied_count: int = 0
     trim_partial_count: int = 0
     reduce_to_core_count: int = 0
     trend_failure_exit_count: int = 0
     time_stop_exit_count: int = 0
     regime_exit_count: int = 0
+    full_exit_due_to_risk_reduction_count: int = 0
+    full_exit_rejected_in_favor_of_trim_count: int = 0
+    full_exit_rejected_in_favor_of_reduce_to_core_count: int = 0
+    starter_position_kept_due_to_regime_count: int = 0
+    went_flat_in_risk_on_count: int = 0
+    risk_on_flattening_justification_count: int = 0
     source_pool_counts: dict[str, int] = Field(default_factory=dict)
     average_entry_extension_metrics: dict[str, float] = Field(default_factory=dict)
     realized_vs_unrealized_by_exit_type: dict[str, float] = Field(default_factory=dict)

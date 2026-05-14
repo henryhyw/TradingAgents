@@ -419,6 +419,14 @@ class TradingSystemRunner:
         buy_blocked_due_to_overheat_count = 0
         buy_blocked_due_to_missing_pullback_confirmation_count = 0
         buy_blocked_due_to_missing_breakout_confirmation_count = 0
+        buy_near_miss_count = 0
+        buy_near_miss_due_to_breakout_confirmation = 0
+        buy_near_miss_due_to_pullback_confirmation = 0
+        risk_on_participation_bias_applied_count = 0
+        full_exit_due_to_risk_reduction_count = 0
+        full_exit_rejected_in_favor_of_trim_count = 0
+        full_exit_rejected_in_favor_of_reduce_to_core_count = 0
+        starter_position_kept_due_to_regime_count = 0
         trim_partial_count = 0
         reduce_to_core_count = 0
         trend_failure_exit_count = 0
@@ -523,6 +531,25 @@ class TradingSystemRunner:
             if bool(source_extra.get("buy_blocked_due_to_missing_breakout_confirmation")):
                 buy_blocked_due_to_missing_breakout_confirmation_count += 1
                 self._increment_counter(block_reason_counts, "buy_blocked_missing_breakout_confirmation")
+            if bool(source_extra.get("buy_near_miss")):
+                buy_near_miss_count += 1
+                self._increment_counter(block_reason_counts, "buy_near_miss")
+            if bool(source_extra.get("buy_near_miss_due_to_breakout_confirmation")):
+                buy_near_miss_due_to_breakout_confirmation += 1
+                self._increment_counter(block_reason_counts, "buy_near_miss_breakout_confirmation")
+            if bool(source_extra.get("buy_near_miss_due_to_pullback_confirmation")):
+                buy_near_miss_due_to_pullback_confirmation += 1
+                self._increment_counter(block_reason_counts, "buy_near_miss_pullback_confirmation")
+            if bool(source_extra.get("risk_on_participation_bias_applied")):
+                risk_on_participation_bias_applied_count += 1
+            if bool(source_extra.get("full_exit_due_to_risk_reduction")):
+                full_exit_due_to_risk_reduction_count += 1
+            if bool(source_extra.get("full_exit_rejected_in_favor_of_trim")):
+                full_exit_rejected_in_favor_of_trim_count += 1
+            if bool(source_extra.get("full_exit_rejected_in_favor_of_reduce_to_core")):
+                full_exit_rejected_in_favor_of_reduce_to_core_count += 1
+            if bool(source_extra.get("starter_position_kept_due_to_regime")):
+                starter_position_kept_due_to_regime_count += 1
             exit_type = source_extra.get("exit_type")
             if isinstance(exit_type, str) and exit_type:
                 if exit_type == "trend_failure_exit":
@@ -652,6 +679,22 @@ class TradingSystemRunner:
             and len(orders) == 0
         )
         final_portfolio = self.broker.get_portfolio_snapshot(run_date)
+        final_gross_fraction = final_portfolio.gross_exposure / max(final_portfolio.equity, 1.0)
+        baseline_gross_fraction = baseline_portfolio.gross_exposure / max(baseline_portfolio.equity, 1.0)
+        went_flat_in_risk_on_count = int(
+            regime is not None
+            and regime.label.value == "risk_on"
+            and baseline_gross_fraction > 0.002
+            and final_gross_fraction <= 0.002
+        )
+        risk_on_flattening_justification_count = 0
+        if went_flat_in_risk_on_count:
+            hard_exit_types = {"trend_failure_exit", "time_stop_exit", "regime_exit", "risk_reduction"}
+            risk_on_flattening_justification_count = sum(
+                1
+                for decision in research_decisions
+                if decision.action.value == "sell" and str(decision.source_metadata.extra.get("exit_type", "")) in hard_exit_types
+            )
         average_entry_extension_metrics = {
             "avg_extension_over_ma20": (
                 sum(entry_extension_ma20_samples) / len(entry_extension_ma20_samples)
@@ -707,11 +750,21 @@ class TradingSystemRunner:
             buy_blocked_due_to_overheat_count=buy_blocked_due_to_overheat_count,
             buy_blocked_due_to_missing_pullback_confirmation_count=buy_blocked_due_to_missing_pullback_confirmation_count,
             buy_blocked_due_to_missing_breakout_confirmation_count=buy_blocked_due_to_missing_breakout_confirmation_count,
+            buy_near_miss_count=buy_near_miss_count,
+            buy_near_miss_due_to_breakout_confirmation=buy_near_miss_due_to_breakout_confirmation,
+            buy_near_miss_due_to_pullback_confirmation=buy_near_miss_due_to_pullback_confirmation,
+            risk_on_participation_bias_applied_count=risk_on_participation_bias_applied_count,
             trim_partial_count=trim_partial_count,
             reduce_to_core_count=reduce_to_core_count,
             trend_failure_exit_count=trend_failure_exit_count,
             time_stop_exit_count=time_stop_exit_count,
             regime_exit_count=regime_exit_count,
+            full_exit_due_to_risk_reduction_count=full_exit_due_to_risk_reduction_count,
+            full_exit_rejected_in_favor_of_trim_count=full_exit_rejected_in_favor_of_trim_count,
+            full_exit_rejected_in_favor_of_reduce_to_core_count=full_exit_rejected_in_favor_of_reduce_to_core_count,
+            starter_position_kept_due_to_regime_count=starter_position_kept_due_to_regime_count,
+            went_flat_in_risk_on_count=went_flat_in_risk_on_count,
+            risk_on_flattening_justification_count=risk_on_flattening_justification_count,
             source_pool_counts=source_pool_counts,
             average_entry_extension_metrics=average_entry_extension_metrics,
             realized_vs_unrealized_by_exit_type=realized_vs_unrealized_by_exit_type,
