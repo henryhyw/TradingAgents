@@ -72,9 +72,11 @@ class RiskEngine:
             risk_checks["extension_penalty"] = decision.extension_penalty
             risk_checks["overheat_penalty"] = decision.overheat_penalty
             source_extra = decision.source_metadata.extra
+            starter_entry_bias = bool(source_extra.get("starter_entry_due_to_risk_on_bias"))
+            risk_checks["starter_entry_due_to_risk_on_bias"] = starter_entry_bias
             if bool(source_extra.get("fallback_origin")):
                 reasons.append("fallback_origin_non_tradable")
-            if decision.entry_mode.value == "none":
+            if decision.entry_mode.value == "none" and not starter_entry_bias:
                 reasons.append("entry_mode_unconfirmed")
             if decision.extension_penalty >= 0.75:
                 reasons.append("entry_extension_too_high")

@@ -392,6 +392,7 @@ class TradingSystemRunner:
         risk_decisions: list[RiskDecision] = []
         portfolio_fits = []
         execution_plans = []
+        order_intent_count = 0
         orders: list[OrderRecord] = []
         fills = []
         rejected_symbols: dict[str, str] = {}
@@ -423,6 +424,15 @@ class TradingSystemRunner:
         buy_near_miss_due_to_breakout_confirmation = 0
         buy_near_miss_due_to_pullback_confirmation = 0
         risk_on_participation_bias_applied_count = 0
+        starter_entry_count = 0
+        starter_entry_due_to_risk_on_bias_count = 0
+        starter_entry_rejected_count = 0
+        near_miss_promoted_count = 0
+        near_miss_not_promoted_count = 0
+        hard_reject_count = 0
+        soft_reject_count = 0
+        starter_keep_count = 0
+        hold_existing_count = 0
         full_exit_due_to_risk_reduction_count = 0
         full_exit_rejected_in_favor_of_trim_count = 0
         full_exit_rejected_in_favor_of_reduce_to_core_count = 0
@@ -542,6 +552,26 @@ class TradingSystemRunner:
                 self._increment_counter(block_reason_counts, "buy_near_miss_pullback_confirmation")
             if bool(source_extra.get("risk_on_participation_bias_applied")):
                 risk_on_participation_bias_applied_count += 1
+            if bool(source_extra.get("starter_entry")):
+                starter_entry_count += 1
+            if bool(source_extra.get("starter_entry_due_to_risk_on_bias")):
+                starter_entry_due_to_risk_on_bias_count += 1
+            if bool(source_extra.get("starter_entry_rejected")):
+                starter_entry_rejected_count += 1
+            if bool(source_extra.get("near_miss_promoted")):
+                near_miss_promoted_count += 1
+            if bool(source_extra.get("near_miss_not_promoted")):
+                near_miss_not_promoted_count += 1
+            if bool(source_extra.get("hard_reject")):
+                hard_reject_count += 1
+                self._increment_counter(block_reason_counts, "hard_reject")
+            if bool(source_extra.get("soft_reject")):
+                soft_reject_count += 1
+                self._increment_counter(block_reason_counts, "soft_reject")
+            if bool(source_extra.get("hold_existing")):
+                hold_existing_count += 1
+            if decision.position_lifecycle_state == OrderIntentType.STARTER_KEEP:
+                starter_keep_count += 1
             if bool(source_extra.get("full_exit_due_to_risk_reduction")):
                 full_exit_due_to_risk_reduction_count += 1
             if bool(source_extra.get("full_exit_rejected_in_favor_of_trim")):
@@ -593,6 +623,9 @@ class TradingSystemRunner:
             )
             self.repository.save_risk_decision(risk_decision)
             risk_decisions.append(risk_decision)
+            if bool(source_extra.get("starter_entry")) and not risk_decision.approved:
+                starter_entry_rejected_count += 1
+                self._increment_counter(block_reason_counts, "starter_entry_risk_rejected")
 
             fit = self.portfolio_service.assess_portfolio_fit(
                 decision=decision,
@@ -616,6 +649,10 @@ class TradingSystemRunner:
             )
             self.repository.save_execution_plan(plan)
             execution_plans.append(plan)
+            if plan.intent_type == OrderIntentType.STARTER_ENTRY:
+                starter_entry_count += 1 if not bool(source_extra.get("starter_entry")) else 0
+            if plan.intent_type == OrderIntentType.STARTER_KEEP and decision.position_lifecycle_state != OrderIntentType.STARTER_KEEP:
+                starter_keep_count += 1
             if plan.intent_type in {OrderIntentType.TRIM, OrderIntentType.TRIM_PARTIAL, OrderIntentType.SCALE_OUT}:
                 trim_partial_count += 1
             if plan.intent_type == OrderIntentType.REDUCE_TO_CORE:
@@ -650,6 +687,7 @@ class TradingSystemRunner:
 
             intent_status = OrderStatus.PENDING if not execute else OrderStatus.NEW
             self.repository.save_order_intent(order_intent, intent_status)
+            order_intent_count += 1
             exit_type = source_extra.get("exit_type")
             if isinstance(exit_type, str) and exit_type:
                 intent_exit_type[order_intent.intent_id] = exit_type
@@ -686,6 +724,20 @@ class TradingSystemRunner:
             and regime.label.value == "risk_on"
             and baseline_gross_fraction > 0.002
             and final_gross_fraction <= 0.002
+        )
+        risk_on_contained_run = (
+            regime is not None
+            and regime.label.value == "risk_on"
+            and regime.volatility_regime in {"contained", "normal", "low"}
+        )
+        repeated_risk_on_no_trade_count = int(
+            execute and risk_on_contained_run and buy_near_miss_count > 0 and order_intent_count == 0
+        )
+        repeated_risk_on_low_exposure_count = int(
+            execute
+            and risk_on_contained_run
+            and buy_near_miss_count > 0
+            and final_gross_fraction <= max(0.03, self.settings.risk.risk_on_starter_position_fraction)
         )
         risk_on_flattening_justification_count = 0
         if went_flat_in_risk_on_count:
@@ -754,6 +806,17 @@ class TradingSystemRunner:
             buy_near_miss_due_to_breakout_confirmation=buy_near_miss_due_to_breakout_confirmation,
             buy_near_miss_due_to_pullback_confirmation=buy_near_miss_due_to_pullback_confirmation,
             risk_on_participation_bias_applied_count=risk_on_participation_bias_applied_count,
+            starter_entry_count=starter_entry_count,
+            starter_entry_due_to_risk_on_bias_count=starter_entry_due_to_risk_on_bias_count,
+            starter_entry_rejected_count=starter_entry_rejected_count,
+            near_miss_promoted_count=near_miss_promoted_count,
+            near_miss_not_promoted_count=near_miss_not_promoted_count,
+            hard_reject_count=hard_reject_count,
+            soft_reject_count=soft_reject_count,
+            starter_keep_count=starter_keep_count,
+            hold_existing_count=hold_existing_count,
+            repeated_risk_on_no_trade_count=repeated_risk_on_no_trade_count,
+            repeated_risk_on_low_exposure_count=repeated_risk_on_low_exposure_count,
             trim_partial_count=trim_partial_count,
             reduce_to_core_count=reduce_to_core_count,
             trend_failure_exit_count=trend_failure_exit_count,

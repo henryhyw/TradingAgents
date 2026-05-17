@@ -99,6 +99,19 @@ def test_order_intent_accepts_reduce_to_core_type():
     assert intent.intent_type == OrderIntentType.REDUCE_TO_CORE
 
 
+def test_order_intent_accepts_starter_entry_type():
+    intent = OrderIntent(
+        as_of_date=date(2026, 5, 15),
+        symbol="AAPL",
+        side=OrderSide.BUY,
+        quantity=3,
+        intent_type=OrderIntentType.STARTER_ENTRY,
+        source_decision_id="rd_test",
+        source_risk_decision_id="rk_test",
+    )
+    assert intent.intent_type == OrderIntentType.STARTER_ENTRY
+
+
 def test_daily_run_summary_defaults_strategy_balance_diagnostics():
     summary = DailyRunSummary(
         as_of_date=date(2026, 5, 13),
@@ -112,6 +125,17 @@ def test_daily_run_summary_defaults_strategy_balance_diagnostics():
     assert summary.buy_near_miss_due_to_breakout_confirmation == 0
     assert summary.buy_near_miss_due_to_pullback_confirmation == 0
     assert summary.risk_on_participation_bias_applied_count == 0
+    assert summary.starter_entry_count == 0
+    assert summary.starter_entry_due_to_risk_on_bias_count == 0
+    assert summary.starter_entry_rejected_count == 0
+    assert summary.near_miss_promoted_count == 0
+    assert summary.near_miss_not_promoted_count == 0
+    assert summary.hard_reject_count == 0
+    assert summary.soft_reject_count == 0
+    assert summary.starter_keep_count == 0
+    assert summary.hold_existing_count == 0
+    assert summary.repeated_risk_on_no_trade_count == 0
+    assert summary.repeated_risk_on_low_exposure_count == 0
     assert summary.full_exit_due_to_risk_reduction_count == 0
     assert summary.full_exit_rejected_in_favor_of_trim_count == 0
     assert summary.full_exit_rejected_in_favor_of_reduce_to_core_count == 0

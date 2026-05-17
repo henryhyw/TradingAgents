@@ -165,3 +165,47 @@ def test_risk_engine_rejects_buy_when_entry_mode_unconfirmed(monkeypatch, tmp_pa
     )
     assert not result.approved
     assert "entry_mode_unconfirmed" in (result.rejection_reason or "")
+
+
+def test_risk_engine_allows_validated_starter_entry_with_unconfirmed_entry_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    engine = RiskEngine(settings)
+    decision = _decision().model_copy(
+        update={
+            "confidence": 0.55,
+            "desired_position_fraction": settings.risk.risk_on_starter_min_fraction,
+            "entry_mode": EntryMode.NONE,
+            "entry_trigger_reason": "risk_on_starter_near_miss_breakout",
+            "extension_penalty": 0.20,
+            "overheat_penalty": 0.10,
+            "source_metadata": SourceMetadata(
+                research_adapter="unit_test",
+                llm_provider="none",
+                llm_model="none",
+                parser_mode="deterministic",
+                extra={"starter_entry_due_to_risk_on_bias": True},
+            ),
+        }
+    )
+
+    result = engine.evaluate(
+        decision=decision,
+        portfolio=_portfolio(),
+        current_position=None,
+        market_bar=_bar(),
+        avg_dollar_volume_20d=80_000_000,
+        earnings_event=EarningsEvent(symbol="AAPL"),
+        daily_pnl_fraction=0.0,
+        opening_trades_today=0,
+        losing_exits_today=0,
+        as_of_date=date(2026, 5, 15),
+        candidate=_candidate(),
+        regime=_regime(),
+        sector_exposure_fraction=0.05,
+    )
+
+    assert result.approved
+    assert result.approved_size_fraction > 0.0
+    assert result.risk_checks.get("starter_entry_due_to_risk_on_bias") is True
+    assert "entry_mode_unconfirmed" not in (result.rejection_reason or "")

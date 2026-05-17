@@ -142,7 +142,7 @@ class PortfolioService:
                 rationale = "No-entry recommendation for long-only portfolio."
             else:
                 fits = False
-                recommended_action = OrderIntentType.HOLD
+                recommended_action = OrderIntentType.STARTER_KEEP if self._lifecycle_state(decision) == OrderIntentType.STARTER_KEEP else OrderIntentType.HOLD
                 target_weight = current_weight
                 rationale = "No-entry signal received while position exists; keeping current long unchanged."
                 warnings.append("avoid_signal_with_existing_inventory")
@@ -150,12 +150,25 @@ class PortfolioService:
             target_weight = max(current_weight, risk_decision.approved_size_fraction)
             buffer = 0.0015
             fits = True
+            lifecycle_state = self._lifecycle_state(decision)
             if current_weight <= buffer:
-                recommended_action = OrderIntentType.NEW_ENTRY
-                rationale = "Initiating new position within approved risk budget."
+                recommended_action = (
+                    OrderIntentType.STARTER_ENTRY if lifecycle_state == OrderIntentType.STARTER_ENTRY else OrderIntentType.NEW_ENTRY
+                )
+                rationale = (
+                    "Initiating small starter position from risk-on near-miss participation bias."
+                    if recommended_action == OrderIntentType.STARTER_ENTRY
+                    else "Initiating new position within approved risk budget."
+                )
             elif target_weight > current_weight + buffer:
-                recommended_action = OrderIntentType.ADD
-                rationale = "Adding to existing position toward approved target weight."
+                recommended_action = (
+                    OrderIntentType.STARTER_ADD if lifecycle_state == OrderIntentType.STARTER_ADD else OrderIntentType.ADD
+                )
+                rationale = (
+                    "Adding a small starter tranche within approved risk budget."
+                    if recommended_action == OrderIntentType.STARTER_ADD
+                    else "Adding to existing position toward approved target weight."
+                )
             elif target_weight < current_weight - buffer:
                 recommended_action = OrderIntentType.TRIM
                 rationale = "Reducing position to align with target risk budget."
@@ -166,7 +179,9 @@ class PortfolioService:
         else:
             rationale = "Hold action keeps current allocation unchanged."
             fits = False
-            recommended_action = OrderIntentType.HOLD
+            recommended_action = (
+                OrderIntentType.STARTER_KEEP if self._lifecycle_state(decision) == OrderIntentType.STARTER_KEEP else OrderIntentType.HOLD
+            )
 
         if regime is not None:
             warnings.append(f"regime_context:{regime.label.value}")
@@ -214,7 +229,12 @@ class PortfolioService:
         current_value = 0.0 if current_position is None else current_position.market_value
         target_value = fit.target_weight * portfolio.equity
 
-        if fit.recommended_action in {OrderIntentType.NEW_ENTRY, OrderIntentType.ADD}:
+        if fit.recommended_action in {
+            OrderIntentType.NEW_ENTRY,
+            OrderIntentType.STARTER_ENTRY,
+            OrderIntentType.ADD,
+            OrderIntentType.STARTER_ADD,
+        }:
             side = OrderSide.BUY
             delta_value = max(0.0, target_value - current_value)
             quantity = math.floor(delta_value / market_bar.close)

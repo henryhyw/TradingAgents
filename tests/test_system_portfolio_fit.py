@@ -60,6 +60,54 @@ def test_portfolio_service_generates_new_entry_plan_and_intent():
     assert intent.intent_type == OrderIntentType.NEW_ENTRY
 
 
+def test_portfolio_service_generates_starter_entry_plan_and_intent():
+    service = PortfolioService()
+    as_of = date(2026, 5, 15)
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.BUY,
+        confidence=0.55,
+        thesis="Starter entry thesis",
+        risk_flags=[],
+        invalidation_conditions=["invalid"],
+        time_horizon="1-4 weeks",
+        desired_position_fraction=0.015,
+        position_lifecycle_state=OrderIntentType.STARTER_ENTRY,
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+            extra={"starter_entry_due_to_risk_on_bias": True},
+        ),
+    )
+    risk = RiskDecision(
+        source_decision_id=decision.decision_id,
+        symbol="AAPL",
+        as_of_date=as_of,
+        approved=True,
+        approved_size_fraction=0.015,
+        execution_constraints=ExecutionConstraints(),
+    )
+    portfolio = PortfolioSnapshot(as_of_date=as_of, cash=100_000, equity=100_000, gross_exposure=0.0, positions=[])
+    bar = MarketBar(symbol="AAPL", date=as_of, open=100, high=100, low=100, close=100, volume=1_000_000)
+
+    fit = service.assess_portfolio_fit(decision, risk, portfolio, current_position=None, market_bar=bar)
+    assert fit.fits_portfolio
+    assert fit.recommended_action == OrderIntentType.STARTER_ENTRY
+    assert fit.target_weight == 0.015
+
+    plan = service.build_execution_plan(fit, decision, portfolio, market_bar=bar, current_position=None)
+    assert plan.intent_type == OrderIntentType.STARTER_ENTRY
+    assert plan.side is not None
+    assert plan.quantity == 15
+
+    intent = service.build_order_intent_from_plan(plan, decision, risk)
+    assert intent is not None
+    assert intent.intent_type == OrderIntentType.STARTER_ENTRY
+
+
 def test_portfolio_service_maps_avoid_to_non_actionable_no_entry():
     service = PortfolioService()
     as_of = date(2026, 4, 13)

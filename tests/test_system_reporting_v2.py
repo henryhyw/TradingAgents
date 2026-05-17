@@ -9,6 +9,8 @@ from tradingagents.system.schemas import (
     BullCaseMemo,
     CandidateAssessment,
     DailyRunSummary,
+    ExecutionConstraints,
+    OrderIntentType,
     DebateSummary,
     PortfolioSnapshot,
     RegimeLabel,
@@ -19,7 +21,6 @@ from tradingagents.system.schemas import (
     RunMode,
     SourceMetadata,
     TradeAction,
-    ExecutionConstraints,
 )
 from tradingagents.system.universe import ScreenedAsset
 
@@ -41,11 +42,18 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         extension_penalty=0.12,
         overheat_penalty=0.05,
         extension_metrics={"extension_over_ma20": 0.04, "rsi14": 66.0, "breakout_distance": 0.02},
+        position_lifecycle_state=OrderIntentType.STARTER_ENTRY,
         source_metadata=SourceMetadata(
             research_adapter="unit_test",
             llm_provider="none",
             llm_model="none",
             parser_mode="deterministic",
+            extra={
+                "entry_reject_class": "starter_eligible_near_miss",
+                "entry_reject_reasons": ["near_miss_breakout_confirmation"],
+                "starter_entry_due_to_risk_on_bias": True,
+                "near_miss_promoted": True,
+            },
         ),
     )
     risk = RiskDecision(
@@ -145,6 +153,17 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
         buy_near_miss_due_to_breakout_confirmation=1,
         buy_near_miss_due_to_pullback_confirmation=0,
         risk_on_participation_bias_applied_count=1,
+        starter_entry_count=1,
+        starter_entry_due_to_risk_on_bias_count=1,
+        starter_entry_rejected_count=0,
+        near_miss_promoted_count=1,
+        near_miss_not_promoted_count=0,
+        hard_reject_count=0,
+        soft_reject_count=1,
+        starter_keep_count=0,
+        hold_existing_count=0,
+        repeated_risk_on_no_trade_count=0,
+        repeated_risk_on_low_exposure_count=1,
         trim_partial_count=0,
         reduce_to_core_count=0,
         trend_failure_exit_count=0,
@@ -202,6 +221,10 @@ def test_generate_daily_report_includes_v2_sections(tmp_path):
     assert "BUY promotion diagnostics" in content
     assert "Entry mode diagnostics" in content
     assert "Entry balance diagnostics" in content
+    assert "Starter participation diagnostics" in content
+    assert "Reject classification diagnostics" in content
+    assert "starter_eligible_near_miss" in content
+    assert "Starter entry: risk_on participation bias promoted" in content
     assert "Exit lifecycle diagnostics" in content
     assert "Risk-on exit balance" in content
     assert "Consistency diagnostics" in content

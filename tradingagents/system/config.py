@@ -80,6 +80,9 @@ class DataSettings(BaseSettingsModel):
     overheat_rsi_threshold: float = 78.0
     entry_confidence_min: float = 0.58
     risk_on_entry_confidence_relief: float = 0.04
+    risk_on_near_miss_confidence_relief: float = 0.12
+    risk_on_near_miss_max_extension_penalty: float = 0.65
+    risk_on_near_miss_max_overheat_penalty: float = 0.70
     risk_on_min_strong_trend_return_20d: float = 0.04
     risk_on_min_relative_strength_20d: float = 0.005
     regime_critical_proxies: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "^VIX"])
@@ -130,6 +133,8 @@ class RiskSettings(BaseSettingsModel):
     risk_on_trim_profit_trigger_fraction: float = 0.07
     risk_on_reduce_to_core_profit_trigger_fraction: float = 0.15
     risk_on_starter_position_fraction: float = 0.025
+    risk_on_starter_min_fraction: float = 0.0125
+    risk_on_starter_max_fraction: float = 0.025
     scale_out_fraction: float = 0.33
     reduce_to_core_target_fraction: float = 0.02
     time_stop_days: PositiveInt = 8
@@ -378,6 +383,9 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
             "overheat_rsi_threshold": _env_float("TRADINGAGENTS_OVERHEAT_RSI_THRESHOLD"),
             "entry_confidence_min": _env_float("TRADINGAGENTS_ENTRY_CONFIDENCE_MIN"),
             "risk_on_entry_confidence_relief": _env_float("TRADINGAGENTS_RISK_ON_ENTRY_CONFIDENCE_RELIEF"),
+            "risk_on_near_miss_confidence_relief": _env_float("TRADINGAGENTS_RISK_ON_NEAR_MISS_CONFIDENCE_RELIEF"),
+            "risk_on_near_miss_max_extension_penalty": _env_float("TRADINGAGENTS_RISK_ON_NEAR_MISS_MAX_EXTENSION_PENALTY"),
+            "risk_on_near_miss_max_overheat_penalty": _env_float("TRADINGAGENTS_RISK_ON_NEAR_MISS_MAX_OVERHEAT_PENALTY"),
             "risk_on_min_strong_trend_return_20d": _env_float("TRADINGAGENTS_RISK_ON_MIN_TREND_RETURN_20D"),
             "risk_on_min_relative_strength_20d": _env_float("TRADINGAGENTS_RISK_ON_MIN_RELATIVE_STRENGTH_20D"),
         },
@@ -397,6 +405,8 @@ def load_settings(config_path: str | Path | None = None) -> SystemSettings:
                 "TRADINGAGENTS_RISK_ON_REDUCE_TO_CORE_PROFIT_TRIGGER"
             ),
             "risk_on_starter_position_fraction": _env_float("TRADINGAGENTS_RISK_ON_STARTER_POSITION"),
+            "risk_on_starter_min_fraction": _env_float("TRADINGAGENTS_RISK_ON_STARTER_MIN"),
+            "risk_on_starter_max_fraction": _env_float("TRADINGAGENTS_RISK_ON_STARTER_MAX"),
             "scale_out_fraction": _env_float("TRADINGAGENTS_SCALE_OUT_FRACTION"),
             "reduce_to_core_target_fraction": _env_float("TRADINGAGENTS_REDUCE_TO_CORE_TARGET"),
             "time_stop_days": _env_int("TRADINGAGENTS_TIME_STOP_DAYS"),

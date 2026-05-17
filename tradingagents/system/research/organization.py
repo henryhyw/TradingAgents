@@ -91,6 +91,22 @@ _BUY_INCONSISTENT_PHRASES = (
     "not a buy",
     "defer new capital",
 )
+_HARD_ENTRY_BLOCKERS = {
+    "insufficient_history_for_entry_mode",
+    "watchlist_only_candidate",
+    "candidate_not_eligible",
+    "liquidity_below_minimum",
+    "technical_signal_not_bullish",
+    "extension_overheat_block",
+    "rsi_overheat_block",
+}
+_SOFT_ENTRY_BLOCKERS = {
+    "missing_breakout_confirmation",
+    "missing_pullback_confirmation",
+    "technical_confidence_too_low",
+    "relative_strength_not_positive",
+    "short_term_return_not_positive",
+}
 
 
 class ResearchOrganization:
@@ -551,6 +567,16 @@ class ResearchOrganization:
         risk_on_relaxed_breakout = (
             strong_risk_on_trend and breakout_distance >= self.settings.data.risk_on_near_breakout_floor
         )
+        risk_on_near_miss_structure = (
+            risk_on_contained
+            and trend_alignment
+            and candidate_return_20d >= (self.settings.data.risk_on_min_strong_trend_return_20d * 0.75)
+            and candidate_relative_strength >= -0.005
+            and candidate_avg_dollar_volume >= (self.settings.data.min_avg_dollar_volume * 1.5)
+            and extension_over_ma20 <= (self.settings.data.max_extension_over_ma20_fraction * 1.25)
+            and extension_penalty < self.settings.data.risk_on_near_miss_max_extension_penalty
+            and overheat_penalty < self.settings.data.risk_on_near_miss_max_overheat_penalty
+        )
         pullback_confirmed = trend_alignment and (
             pullback_distance_ma20 <= pullback_distance_limit
             or pullback_distance_ma50 <= (pullback_distance_limit * 0.85)
@@ -568,11 +594,14 @@ class ResearchOrganization:
                 blockers.append("missing_breakout_confirmation")
             if not pullback_mode_ok:
                 blockers.append("missing_pullback_confirmation")
-            if strong_risk_on_trend and not breakout_mode_ok and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006):
+            if (
+                risk_on_near_miss_structure
+                and not breakout_mode_ok
+                and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006)
+            ):
                 blockers.append("near_miss_breakout_confirmation")
             if (
-                risk_on_contained
-                and trend_alignment
+                risk_on_near_miss_structure
                 and not pullback_mode_ok
                 and min(pullback_distance_ma20, pullback_distance_ma50) <= (pullback_distance_limit * 1.20)
                 and ret_3d >= 0.0
@@ -595,11 +624,10 @@ class ResearchOrganization:
             reason = "risk_on_relaxed_pullback_confirmation" if risk_on_contained else "pullback_confirmation_passed"
             return EntryMode.PULLBACK, reason, [], extension_penalty, overheat_penalty
         blockers.extend(["missing_breakout_confirmation", "missing_pullback_confirmation"])
-        if strong_risk_on_trend and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006):
+        if risk_on_near_miss_structure and breakout_distance >= (self.settings.data.risk_on_near_breakout_floor - 0.006):
             blockers.append("near_miss_breakout_confirmation")
         if (
-            risk_on_contained
-            and trend_alignment
+            risk_on_near_miss_structure
             and min(pullback_distance_ma20, pullback_distance_ma50) <= (pullback_distance_limit * 1.20)
             and ret_3d >= 0.0
         ):
@@ -622,6 +650,107 @@ class ResearchOrganization:
         if entry_mode == EntryMode.NONE:
             return False, reason
         return True, reason
+
+    def _classify_entry_reject(
+        self,
+        *,
+        decision: ResearchDecision,
+        candidate: CandidateAssessment | None,
+        regime: RegimeSnapshot | None,
+        technical_memo: AnalystMemo,
+        debate: DebateSummary,
+        entry_mode: EntryMode,
+        entry_blockers: list[str],
+        extension_penalty: float,
+        overheat_penalty: float,
+        fallback_origin: bool,
+        thesis_semantics: dict[str, int | bool],
+    ) -> tuple[str, list[str], bool]:
+        hard_reasons: list[str] = []
+        soft_reasons: list[str] = []
+        near_miss = any(blocker.startswith("near_miss_") for blocker in entry_blockers)
+
+        for blocker in entry_blockers:
+            if blocker in _HARD_ENTRY_BLOCKERS or blocker.startswith("regime_"):
+                hard_reasons.append(blocker)
+            elif blocker in _SOFT_ENTRY_BLOCKERS or blocker.startswith("near_miss_"):
+                soft_reasons.append(blocker)
+
+        if fallback_origin:
+            hard_reasons.append("fallback_origin")
+        if bool(thesis_semantics.get("strongly_bearish", False)) or int(thesis_semantics.get("no_entry_hits", 0)) > 0:
+            hard_reasons.append("thesis_no_entry_or_bearish")
+        if technical_memo.signal != "bullish":
+            hard_reasons.append("technical_signal_not_bullish")
+        if extension_penalty >= self.settings.data.risk_on_near_miss_max_extension_penalty:
+            hard_reasons.append("extension_penalty_too_high")
+        if overheat_penalty >= self.settings.data.risk_on_near_miss_max_overheat_penalty:
+            hard_reasons.append("overheat_penalty_too_high")
+        if candidate is None:
+            hard_reasons.append("missing_candidate")
+        elif not candidate.eligible or candidate.watchlist_only:
+            hard_reasons.append("candidate_not_tradable")
+        elif candidate.avg_dollar_volume_20d < self.settings.data.min_avg_dollar_volume:
+            hard_reasons.append("liquidity_below_minimum")
+
+        if hard_reasons:
+            return "hard_reject", list(dict.fromkeys(hard_reasons)), False
+
+        risk_on_contained = self._is_risk_on_contained(regime)
+        confidence_floor = max(
+            0.46,
+            self.settings.data.entry_confidence_min - self.settings.data.risk_on_near_miss_confidence_relief,
+        )
+        relative_strength_ok = candidate is not None and candidate.relative_strength_20d >= -0.005
+        momentum_ok = candidate is not None and candidate.return_20d >= (
+            self.settings.data.risk_on_min_strong_trend_return_20d * 0.75
+        )
+        liquidity_ok = candidate is not None and candidate.avg_dollar_volume_20d >= (
+            self.settings.data.min_avg_dollar_volume * 1.5
+        )
+        debate_not_hard_bear = not (debate.winning_side == "bear" and debate.confidence_balance >= 0.70)
+        starter_eligible = (
+            risk_on_contained
+            and near_miss
+            and entry_mode == EntryMode.NONE
+            and technical_memo.confidence >= confidence_floor
+            and decision.confidence >= confidence_floor
+            and relative_strength_ok
+            and momentum_ok
+            and liquidity_ok
+            and debate_not_hard_bear
+        )
+        if starter_eligible:
+            return "starter_eligible_near_miss", list(dict.fromkeys(soft_reasons or ["near_miss"])), True
+        if near_miss or soft_reasons:
+            return "soft_reject", list(dict.fromkeys(soft_reasons or ["soft_reject"])), False
+        return "none", [], False
+
+    def _starter_position_fraction(
+        self,
+        *,
+        decision: ResearchDecision,
+        candidate: CandidateAssessment | None,
+        extension_penalty: float,
+        overheat_penalty: float,
+        entry_blockers: list[str],
+    ) -> float:
+        base = self.settings.risk.risk_on_starter_position_fraction
+        quality = 0.0
+        if candidate is not None:
+            quality += _clamp((candidate.avg_dollar_volume_20d / max(self.settings.data.min_avg_dollar_volume, 1.0) - 1.0) / 6.0, 0.0, 0.20)
+            quality += _clamp((candidate.relative_strength_20d + 0.005) / 0.055, 0.0, 0.20)
+            quality += _clamp((candidate.return_20d - 0.02) / 0.12, 0.0, 0.20)
+        quality += _clamp((decision.confidence - 0.46) / 0.24, 0.0, 0.15)
+        if "near_miss_breakout_confirmation" in entry_blockers and "near_miss_pullback_confirmation" in entry_blockers:
+            quality -= 0.08
+        quality -= (0.15 * extension_penalty) + (0.20 * overheat_penalty)
+        sized = base * _clamp(0.55 + quality, 0.50, 1.10)
+        return _clamp(
+            sized,
+            self.settings.risk.risk_on_starter_min_fraction,
+            self.settings.risk.risk_on_starter_max_fraction,
+        )
 
     @staticmethod
     def _thesis_semantics(thesis: str) -> dict[str, int | bool]:
@@ -876,6 +1005,8 @@ class ResearchOrganization:
             entry_reason = decision.entry_trigger_reason or "entry_confirmation_passed"
             extension = decision.extension_metrics.get("extension_over_ma20", 0.0)
             rsi = decision.extension_metrics.get("rsi14", 50.0)
+            lifecycle_state = decision.position_lifecycle_state
+            starter_entry = lifecycle_state in {OrderIntentType.STARTER_ENTRY, OrderIntentType.STARTER_ADD}
             regime_text = "Regime context is favorable for selective long entries."
             if regime is not None:
                 regime_text = (
@@ -888,8 +1019,14 @@ class ResearchOrganization:
                     f"{candidate.symbol} remains eligible with ADV20 ${candidate.avg_dollar_volume_20d:,.0f}, "
                     f"20d return {candidate.return_20d:.2%}, and relative strength {candidate.relative_strength_20d:.2%}."
                 )
+            intro = (
+                "Starter entry rationale: initiate a small long position because this is a validated "
+                "risk-on near-miss setup, not a full-size entry. "
+                if starter_entry
+                else "Entry rationale: initiate a long position because cross-checks are supportive now. "
+            )
             return (
-                "Entry rationale: initiate a long position because cross-checks are supportive now. "
+                intro +
                 f"{regime_text} {candidate_text} "
                 f"Entry mode={entry_mode} ({entry_reason}), extension_over_ma20={extension:.2%}, RSI14={rsi:.1f}. "
                 f"Technical evidence: {technical_memo.summary} "
@@ -978,6 +1115,16 @@ class ResearchOrganization:
         buy_near_miss_due_to_breakout_confirmation = False
         buy_near_miss_due_to_pullback_confirmation = False
         risk_on_participation_bias_applied = False
+        starter_entry = False
+        starter_entry_due_to_risk_on_bias = False
+        starter_entry_rejected = False
+        near_miss_promoted = False
+        near_miss_not_promoted = False
+        hard_reject = False
+        soft_reject = False
+        entry_reject_class = "none"
+        entry_reject_reasons: list[str] = []
+        hold_existing = False
         full_exit_due_to_risk_reduction = False
         full_exit_rejected_in_favor_of_trim = False
         full_exit_rejected_in_favor_of_reduce_to_core = False
@@ -985,6 +1132,7 @@ class ResearchOrganization:
         lifecycle_overlay_applied = False
         lifecycle_state: OrderIntentType | None = decision.position_lifecycle_state
         lifecycle_target_fraction: float | None = None
+        starter_position_fraction: float | None = None
 
         fallback_origin, fallback_reason = self._is_fallback_origin(decision)
         entry_mode, entry_reason, entry_blockers, extension_penalty, overheat_penalty = self._entry_mode_and_gates(
@@ -1005,6 +1153,23 @@ class ResearchOrganization:
             buy_near_miss_due_to_breakout_confirmation = True
         if "near_miss_pullback_confirmation" in entry_blockers:
             buy_near_miss_due_to_pullback_confirmation = True
+        buy_near_miss = buy_near_miss_due_to_breakout_confirmation or buy_near_miss_due_to_pullback_confirmation
+        thesis_semantics = self._thesis_semantics(decision.thesis)
+        entry_reject_class, entry_reject_reasons, starter_eligible_near_miss = self._classify_entry_reject(
+            decision=decision,
+            candidate=candidate,
+            regime=regime,
+            technical_memo=technical_memo,
+            debate=debate,
+            entry_mode=entry_mode,
+            entry_blockers=entry_blockers,
+            extension_penalty=extension_penalty,
+            overheat_penalty=overheat_penalty,
+            fallback_origin=fallback_origin,
+            thesis_semantics=thesis_semantics,
+        )
+        hard_reject = entry_reject_class == "hard_reject"
+        soft_reject = entry_reject_class in {"soft_reject", "starter_eligible_near_miss"}
 
         inventory_overlay = self._inventory_lifecycle_overlay(
             current_position=current_position,
@@ -1075,19 +1240,29 @@ class ResearchOrganization:
 
         if final_action in {TradeAction.HOLD, TradeAction.AVOID} and not has_inventory:
             participation_semantics = self._thesis_semantics(decision.thesis)
+            confidence_floor = max(
+                0.46,
+                self.settings.data.entry_confidence_min - self.settings.data.risk_on_near_miss_confidence_relief,
+            )
             participation_bias_allowed = (
                 self._is_risk_on_contained(regime)
-                and entry_mode != EntryMode.NONE
+                and (entry_mode != EntryMode.NONE or starter_eligible_near_miss)
                 and not fallback_origin
                 and technical_memo.signal == "bullish"
-                and decision.confidence >= max(0.50, self.settings.data.entry_confidence_min - 0.08)
+                and decision.confidence >= (confidence_floor if starter_eligible_near_miss else max(0.50, self.settings.data.entry_confidence_min - 0.08))
+                and technical_memo.confidence >= confidence_floor
                 and not bool(participation_semantics.get("strongly_bearish", False))
-                and overheat_penalty < 0.65
-                and (debate.winning_side != "bear" or debate.confidence_balance < 0.64)
+                and not hard_reject
+                and overheat_penalty < self.settings.data.risk_on_near_miss_max_overheat_penalty
+                and extension_penalty < self.settings.data.risk_on_near_miss_max_extension_penalty
+                and (debate.winning_side != "bear" or debate.confidence_balance < (0.70 if starter_eligible_near_miss else 0.64))
                 and candidate is not None
                 and candidate.eligible
                 and not candidate.watchlist_only
-                and candidate.relative_strength_20d >= self.settings.data.risk_on_min_relative_strength_20d
+                and candidate.relative_strength_20d >= (
+                    -0.005 if starter_eligible_near_miss else self.settings.data.risk_on_min_relative_strength_20d
+                )
+                and candidate.return_20d >= (self.settings.data.risk_on_min_strong_trend_return_20d * 0.75)
                 and candidate.avg_dollar_volume_20d >= self.settings.data.min_avg_dollar_volume
             )
             if participation_bias_allowed:
@@ -1095,7 +1270,49 @@ class ResearchOrganization:
                 final_action_changed = True
                 promoted_buy = True
                 risk_on_participation_bias_applied = True
+                if starter_eligible_near_miss:
+                    starter_entry = True
+                    starter_entry_due_to_risk_on_bias = True
+                    near_miss_promoted = True
+                    lifecycle_state = OrderIntentType.STARTER_ENTRY
+                    starter_position_fraction = self._starter_position_fraction(
+                        decision=decision,
+                        candidate=candidate,
+                        extension_penalty=extension_penalty,
+                        overheat_penalty=overheat_penalty,
+                        entry_blockers=entry_blockers,
+                    )
+                    entry_reason = (
+                        "risk_on_starter_near_miss_breakout"
+                        if buy_near_miss_due_to_breakout_confirmation
+                        else "risk_on_starter_near_miss_pullback"
+                    )
                 override_reasons.append(f"risk_on_participation_bias:{entry_reason}")
+
+        if (
+            final_action == TradeAction.BUY
+            and entry_mode == EntryMode.NONE
+            and starter_eligible_near_miss
+            and not starter_entry_due_to_risk_on_bias
+        ):
+            starter_entry = True
+            starter_entry_due_to_risk_on_bias = True
+            near_miss_promoted = True
+            risk_on_participation_bias_applied = True
+            lifecycle_state = OrderIntentType.STARTER_ENTRY
+            starter_position_fraction = self._starter_position_fraction(
+                decision=decision,
+                candidate=candidate,
+                extension_penalty=extension_penalty,
+                overheat_penalty=overheat_penalty,
+                entry_blockers=entry_blockers,
+            )
+            entry_reason = (
+                "risk_on_starter_near_miss_breakout"
+                if buy_near_miss_due_to_breakout_confirmation
+                else "risk_on_starter_near_miss_pullback"
+            )
+            override_reasons.append(f"risk_on_starter_entry_sized:{entry_reason}")
 
         if final_action == TradeAction.BUY and fallback_origin:
             final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
@@ -1107,7 +1324,7 @@ class ResearchOrganization:
             inconsistent_buy_prevented = True
             override_reasons.append(f"buy_blocked_fallback_origin:{fallback_reason or 'unknown'}")
 
-        if final_action == TradeAction.BUY and entry_mode == EntryMode.NONE:
+        if final_action == TradeAction.BUY and entry_mode == EntryMode.NONE and not starter_entry_due_to_risk_on_bias:
             final_action = TradeAction.HOLD if has_inventory else TradeAction.AVOID
             final_action_changed = True
             consistency_enforcement_changed_action = True
@@ -1129,7 +1346,6 @@ class ResearchOrganization:
             ):
                 override_reasons.append(f"buy_blocked_entry_gate:{entry_reason}")
 
-        thesis_semantics = self._thesis_semantics(decision.thesis)
         if final_action == TradeAction.BUY:
             buy_rewrite_attempted = True
             draft_buy_decision = decision.model_copy(
@@ -1166,6 +1382,9 @@ class ResearchOrganization:
                 consistency_enforcement_changed_action = True
                 final_action_downgraded = True
                 buy_blocked_due_to_thesis_inconsistency = True
+                if starter_entry_due_to_risk_on_bias:
+                    starter_entry_rejected = True
+                    starter_entry = False
                 action_thesis_mismatch_detected = True
                 inconsistent_buy_prevented = True
                 override_reasons.append(
@@ -1225,7 +1444,13 @@ class ResearchOrganization:
                     lifecycle_target_fraction = None
                     final_action_changed = True
                     starter_position_kept_due_to_regime = True
+                    lifecycle_state = OrderIntentType.STARTER_KEEP
                     override_reasons.append("risk_on_full_exit_rejected_weak_justification")
+
+        if final_action == TradeAction.HOLD and has_inventory:
+            hold_existing = True
+            if starter_position_kept_due_to_regime and lifecycle_state is None:
+                lifecycle_state = OrderIntentType.STARTER_KEEP
 
         preferred_action = self._preferred_action_from_debate(debate.winning_side, has_inventory)
         aligned = final_action == preferred_action
@@ -1246,7 +1471,9 @@ class ResearchOrganization:
             else:
                 desired_position_fraction = 0.0
         elif desired_position_fraction is None or desired_position_fraction <= 0:
-            if risk_on_participation_bias_applied:
+            if starter_position_fraction is not None:
+                desired_position_fraction = min(starter_position_fraction, self.settings.risk.max_position_size_fraction)
+            elif risk_on_participation_bias_applied:
                 desired_position_fraction = min(
                     self.settings.risk.risk_on_starter_position_fraction,
                     self.settings.risk.max_position_size_fraction,
@@ -1308,6 +1535,10 @@ class ResearchOrganization:
             full_exit_due_to_risk_reduction = (
                 resolved_exit_type == "risk_reduction" and lifecycle_state in {None, OrderIntentType.EXIT}
             )
+        if buy_near_miss and not near_miss_promoted:
+            near_miss_not_promoted = True
+        if starter_eligible_near_miss and not starter_entry:
+            starter_entry_rejected = True
 
         updated_source_extra = dict(decision.source_metadata.extra)
         updated_source_extra.update(
@@ -1338,8 +1569,18 @@ class ResearchOrganization:
                 "buy_blocked_due_to_missing_breakout_confirmation": buy_blocked_due_to_missing_breakout_confirmation,
                 "buy_near_miss_due_to_breakout_confirmation": buy_near_miss_due_to_breakout_confirmation,
                 "buy_near_miss_due_to_pullback_confirmation": buy_near_miss_due_to_pullback_confirmation,
-                "buy_near_miss": buy_near_miss_due_to_breakout_confirmation or buy_near_miss_due_to_pullback_confirmation,
+                "buy_near_miss": buy_near_miss,
                 "risk_on_participation_bias_applied": risk_on_participation_bias_applied,
+                "starter_entry": starter_entry,
+                "starter_entry_due_to_risk_on_bias": starter_entry_due_to_risk_on_bias,
+                "starter_entry_rejected": starter_entry_rejected,
+                "near_miss_promoted": near_miss_promoted,
+                "near_miss_not_promoted": near_miss_not_promoted,
+                "entry_reject_class": entry_reject_class,
+                "entry_reject_reasons": entry_reject_reasons,
+                "hard_reject": hard_reject,
+                "soft_reject": soft_reject,
+                "hold_existing": hold_existing,
                 "full_exit_due_to_risk_reduction": full_exit_due_to_risk_reduction,
                 "full_exit_rejected_in_favor_of_trim": full_exit_rejected_in_favor_of_trim,
                 "full_exit_rejected_in_favor_of_reduce_to_core": full_exit_rejected_in_favor_of_reduce_to_core,

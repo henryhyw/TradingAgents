@@ -191,6 +191,9 @@ def test_research_org_blocks_buy_promotion_for_fallback_origin(monkeypatch, tmp_
     assert bundle.debate_summary.final_action == TradeAction.AVOID
     assert decision.source_metadata.extra.get("buy_promotion_applied") is False
     assert decision.source_metadata.extra.get("buy_blocked_due_to_fallback") is True
+    assert decision.source_metadata.extra.get("hard_reject") is True
+    assert decision.source_metadata.extra.get("starter_entry") is False
+    assert decision.source_metadata.extra.get("starter_entry_due_to_risk_on_bias") is False
     assert "insufficient research confidence" in decision.thesis.lower()
 
 
@@ -418,6 +421,234 @@ def test_research_org_applies_risk_on_participation_bias(monkeypatch, tmp_path):
     assert updated.source_metadata.extra.get("risk_on_participation_bias_applied") is True
     assert updated.source_metadata.extra.get("buy_promotion_source") == "risk_on_participation_bias"
     assert "risk_on_participation_bias" in (updated_debate.override_reason or "")
+
+
+def test_research_org_promotes_starter_eligible_near_miss_in_risk_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 5, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=0.8, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD))
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.AVOID,
+        confidence=0.52,
+        thesis="Constructive trend support and liquidity justify a small risk-on starter if confirmation is only marginal.",
+        risk_flags=[],
+        invalidation_conditions=["close below trend support"],
+        time_horizon="1-4 weeks",
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+        ),
+    )
+    debate = DebateSummary(
+        symbol="AAPL",
+        as_of_date=as_of,
+        adjudication="Bear case is modest; the setup is a starter-eligible near miss.",
+        winning_side="bear",
+        confidence_balance=0.60,
+    )
+    technical_memo = AnalystMemo(
+        symbol="AAPL",
+        as_of_date=as_of,
+        role="Technical Analyst",
+        signal="bullish",
+        confidence=0.55,
+        summary="Trend aligned with marginal breakout and pullback confirmation.",
+    )
+    technical_state = {
+        "insufficient_history": False,
+        "close": 120.0,
+        "sma20": 115.0,
+        "sma50": 110.0,
+        "extension_over_ma20": 0.043,
+        "extension_over_ma50": 0.091,
+        "rsi14": 65.0,
+        "trend_alignment": True,
+        "ret_3d": 0.001,
+        "ret_20d": 0.065,
+        "ret_60d": 0.18,
+        "breakout_distance": -0.006,
+        "pullback_distance_ma20": 0.06,
+        "pullback_distance_ma50": 0.12,
+    }
+
+    updated, updated_debate = org._adjudicate_long_only_action(
+        decision=decision,
+        debate=debate,
+        candidate=_candidate(as_of),
+        regime=_regime(as_of),
+        technical_memo=technical_memo,
+        current_position=None,
+        technical_state=technical_state,
+    )
+
+    assert updated.action == TradeAction.BUY
+    assert updated.entry_mode == EntryMode.NONE
+    assert updated.position_lifecycle_state == OrderIntentType.STARTER_ENTRY
+    assert settings.risk.risk_on_starter_min_fraction <= (updated.desired_position_fraction or 0.0)
+    assert (updated.desired_position_fraction or 0.0) <= settings.risk.risk_on_starter_max_fraction
+    assert updated.source_metadata.extra.get("entry_reject_class") == "starter_eligible_near_miss"
+    assert updated.source_metadata.extra.get("starter_entry") is True
+    assert updated.source_metadata.extra.get("starter_entry_due_to_risk_on_bias") is True
+    assert updated.source_metadata.extra.get("near_miss_promoted") is True
+    assert updated.source_metadata.extra.get("starter_entry_rejected") is False
+    assert "starter entry rationale" in updated.thesis.lower()
+    assert "risk_on_participation_bias" in (updated_debate.override_reason or "")
+
+
+def test_research_org_sizes_llm_buy_near_miss_as_starter_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 5, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=0.8, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.BUY))
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.BUY,
+        confidence=0.55,
+        thesis="Constructive long setup with strong liquidity and trend, but confirmation is marginal.",
+        risk_flags=[],
+        invalidation_conditions=["close below trend support"],
+        time_horizon="1-4 weeks",
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="deterministic",
+        ),
+    )
+    debate = DebateSummary(
+        symbol="AAPL",
+        as_of_date=as_of,
+        adjudication="Bull case modestly wins in a favorable regime.",
+        winning_side="bull",
+        confidence_balance=0.58,
+    )
+    technical_memo = AnalystMemo(
+        symbol="AAPL",
+        as_of_date=as_of,
+        role="Technical Analyst",
+        signal="bullish",
+        confidence=0.55,
+        summary="Trend aligned with marginal confirmation.",
+    )
+    technical_state = {
+        "insufficient_history": False,
+        "close": 120.0,
+        "sma20": 115.0,
+        "sma50": 110.0,
+        "extension_over_ma20": 0.043,
+        "extension_over_ma50": 0.091,
+        "rsi14": 65.0,
+        "trend_alignment": True,
+        "ret_3d": 0.001,
+        "ret_20d": 0.065,
+        "ret_60d": 0.18,
+        "breakout_distance": -0.006,
+        "pullback_distance_ma20": 0.06,
+        "pullback_distance_ma50": 0.12,
+    }
+
+    updated, updated_debate = org._adjudicate_long_only_action(
+        decision=decision,
+        debate=debate,
+        candidate=_candidate(as_of),
+        regime=_regime(as_of),
+        technical_memo=technical_memo,
+        current_position=None,
+        technical_state=technical_state,
+    )
+
+    assert updated.action == TradeAction.BUY
+    assert updated.entry_mode == EntryMode.NONE
+    assert updated.position_lifecycle_state == OrderIntentType.STARTER_ENTRY
+    assert updated.source_metadata.extra.get("starter_entry_due_to_risk_on_bias") is True
+    assert updated.source_metadata.extra.get("near_miss_promoted") is True
+    assert "risk_on_starter_entry_sized" in (updated_debate.override_reason or "")
+
+
+def test_research_org_keeps_hard_reject_near_miss_as_no_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(tmp_path / ".tradingagents"))
+    settings = load_settings()
+    as_of = date(2026, 5, 15)
+    history = make_price_history(as_of, periods=180, start_price=90, step=0.8, volume=8_000_000)
+    provider = FakeMarketDataProvider(symbols_with_same_history(["AAPL"], history))
+    org = ResearchOrganization(settings=settings, provider=provider, adapter=StaticActionAdapter(TradeAction.HOLD))
+    decision = ResearchDecision(
+        symbol="AAPL",
+        as_of_date=as_of,
+        action=TradeAction.AVOID,
+        confidence=0.70,
+        thesis="Research adapter fallback: insufficient research confidence after upstream ResourceExhausted.",
+        risk_flags=["upstream_graph_failure", "insufficient_research_confidence"],
+        invalidation_conditions=["n/a"],
+        time_horizon="N/A",
+        source_metadata=SourceMetadata(
+            research_adapter="unit_test",
+            llm_provider="none",
+            llm_model="none",
+            parser_mode="upstream_error_no_entry",
+            extra={"upstream_fallback_mode": "research_error_no_entry", "upstream_failure_type": "ResourceExhausted"},
+        ),
+    )
+    debate = DebateSummary(
+        symbol="AAPL",
+        as_of_date=as_of,
+        adjudication="Bullish market context, but research failed upstream.",
+        winning_side="bull",
+        confidence_balance=0.72,
+    )
+    technical_memo = AnalystMemo(
+        symbol="AAPL",
+        as_of_date=as_of,
+        role="Technical Analyst",
+        signal="bullish",
+        confidence=0.62,
+        summary="Trend aligned with marginal confirmation.",
+    )
+    technical_state = {
+        "insufficient_history": False,
+        "close": 120.0,
+        "sma20": 115.0,
+        "sma50": 110.0,
+        "extension_over_ma20": 0.043,
+        "extension_over_ma50": 0.091,
+        "rsi14": 65.0,
+        "trend_alignment": True,
+        "ret_3d": 0.001,
+        "ret_20d": 0.065,
+        "ret_60d": 0.18,
+        "breakout_distance": -0.006,
+        "pullback_distance_ma20": 0.06,
+        "pullback_distance_ma50": 0.12,
+    }
+
+    updated, _ = org._adjudicate_long_only_action(
+        decision=decision,
+        debate=debate,
+        candidate=_candidate(as_of),
+        regime=_regime(as_of),
+        technical_memo=technical_memo,
+        current_position=None,
+        technical_state=technical_state,
+    )
+
+    assert updated.action == TradeAction.AVOID
+    assert updated.position_lifecycle_state is None
+    assert updated.source_metadata.extra.get("hard_reject") is True
+    assert updated.source_metadata.extra.get("entry_reject_class") == "hard_reject"
+    assert updated.source_metadata.extra.get("starter_entry") is False
+    assert updated.source_metadata.extra.get("starter_entry_due_to_risk_on_bias") is False
+    assert updated.source_metadata.extra.get("near_miss_promoted") is False
+    assert updated.source_metadata.extra.get("buy_blocked_due_to_fallback") is True
 
 
 def test_research_org_blocks_overheated_breakout_buy(monkeypatch, tmp_path):

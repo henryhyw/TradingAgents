@@ -150,6 +150,19 @@ def generate_daily_report(
             lines.append(
                 f"  Promotion: BUY promoted via {source_extra.get('buy_promotion_source') or 'adjudication'} after validation."
             )
+        if source_extra.get("entry_reject_class") and source_extra.get("entry_reject_class") != "none":
+            lines.append(
+                "  Entry reject class: "
+                f"{source_extra.get('entry_reject_class')} | reasons={source_extra.get('entry_reject_reasons', [])}"
+            )
+        if source_extra.get("starter_entry_due_to_risk_on_bias"):
+            lines.append(
+                "  Starter entry: risk_on participation bias promoted a validated near-miss into a small starter position."
+            )
+        if source_extra.get("near_miss_not_promoted"):
+            lines.append("  Near miss: not promoted because validation or risk conditions were insufficient.")
+        if source_extra.get("hold_existing"):
+            lines.append("  Position handling: hold_existing in current portfolio context.")
         if source_extra.get("buy_blocked_due_to_fallback"):
             lines.append("  Promotion Block: BUY blocked because research originated from upstream fallback.")
         if source_extra.get("buy_blocked_due_to_thesis_inconsistency"):
@@ -303,6 +316,21 @@ def generate_daily_report(
             f"risk_on_participation_bias={summary.risk_on_participation_bias_applied_count}"
         )
         lines.append(
+            "- Starter participation diagnostics: "
+            f"starter_entry={summary.starter_entry_count}, "
+            f"starter_bias={summary.starter_entry_due_to_risk_on_bias_count}, "
+            f"starter_rejected={summary.starter_entry_rejected_count}, "
+            f"near_miss_promoted={summary.near_miss_promoted_count}, "
+            f"near_miss_not_promoted={summary.near_miss_not_promoted_count}"
+        )
+        lines.append(
+            "- Reject classification diagnostics: "
+            f"hard_reject={summary.hard_reject_count}, "
+            f"soft_reject={summary.soft_reject_count}, "
+            f"hold_existing={summary.hold_existing_count}, "
+            f"starter_keep={summary.starter_keep_count}"
+        )
+        lines.append(
             "- Exit lifecycle diagnostics: "
             f"trim_partial={summary.trim_partial_count}, "
             f"reduce_to_core={summary.reduce_to_core_count}, "
@@ -317,7 +345,9 @@ def generate_daily_report(
             f"exit_to_reduce_core={summary.full_exit_rejected_in_favor_of_reduce_to_core_count}, "
             f"starter_kept={summary.starter_position_kept_due_to_regime_count}, "
             f"went_flat_in_risk_on={summary.went_flat_in_risk_on_count}, "
-            f"flattening_justifications={summary.risk_on_flattening_justification_count}"
+            f"flattening_justifications={summary.risk_on_flattening_justification_count}, "
+            f"risk_on_no_trade={summary.repeated_risk_on_no_trade_count}, "
+            f"risk_on_low_exposure={summary.repeated_risk_on_low_exposure_count}"
         )
         lines.append(
             "- Source pools: "

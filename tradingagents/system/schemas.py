@@ -73,13 +73,16 @@ class EntryMode(str, Enum):
 
 class OrderIntentType(str, Enum):
     NEW_ENTRY = "new_entry"
+    STARTER_ENTRY = "starter_entry"
     ADD = "add"
+    STARTER_ADD = "starter_add"
     TRIM = "trim"
     TRIM_PARTIAL = "trim_partial"
     REDUCE_TO_CORE = "reduce_to_core"
     SCALE_OUT = "scale_out"
     EXIT = "exit"
     HOLD = "hold"
+    STARTER_KEEP = "starter_keep"
     AVOID = "avoid"
 
 
@@ -489,6 +492,17 @@ class DailyRunSummary(StrictModel):
     buy_near_miss_due_to_breakout_confirmation: int = 0
     buy_near_miss_due_to_pullback_confirmation: int = 0
     risk_on_participation_bias_applied_count: int = 0
+    starter_entry_count: int = 0
+    starter_entry_due_to_risk_on_bias_count: int = 0
+    starter_entry_rejected_count: int = 0
+    near_miss_promoted_count: int = 0
+    near_miss_not_promoted_count: int = 0
+    hard_reject_count: int = 0
+    soft_reject_count: int = 0
+    starter_keep_count: int = 0
+    hold_existing_count: int = 0
+    repeated_risk_on_no_trade_count: int = 0
+    repeated_risk_on_low_exposure_count: int = 0
     trim_partial_count: int = 0
     reduce_to_core_count: int = 0
     trend_failure_exit_count: int = 0
